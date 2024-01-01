@@ -1,6 +1,5 @@
 .text
 
-.global avx_asm_read
 .global asm_read
 .global asm_write
 .global asm_copy
@@ -21,80 +20,7 @@
 .global repmovsb_copy
 .global repmovsd_copy
 
-# %rcx = ptr to float array
-# %rdx = arr length
-# [%rsp + 4] = iterations, put this into %r14
-# [%rsp + 8] = start offset, put this into %rbx (not used)
-
 asm_read:
-	push %r14
-	push %rdi
-	push %rsi
-	push %rbx
-	mov  0x14(%rsp), %r14 # put iterations into %r14
-	mov  0x18(%rsp), %rbx # put start offset into %rbx
-
-	sub $32, %rdx  # last iteration: %rsi == %rdx. %rsi > %rdx = break
-	xor  %rsi, %rsi  # reset index
-	lea  (%rcx, %rsi, 4), %rdi # reset pointer
-
-asm_read_pass_loop:
-	mov (%rdi), %rax
-	mov 8(%rdi), %rax
-	mov 16(%rdi), %rax
-	mov 24(%rdi), %rax
-	mov 32(%rdi), %rax
-	mov 40(%rdi), %rax
-	mov 48(%rdi), %rax
-	mov 56(%rdi), %rax
-	mov 64(%rdi), %rax
-	mov 72(%rdi), %rax
-	mov 80(%rdi), %rax
-	mov 88(%rdi), %rax
-	mov 96(%rdi), %rax
-	mov 104(%rdi), %rax
-	mov 112(%rdi), %rax
-	mov 120(%rdi), %rax
-	mov 128(%rdi), %rax
-	mov 136(%rdi), %rax
-	mov 144(%rdi), %rax
-	mov 152(%rdi), %rax
-	mov 160(%rdi), %rax
-	mov 168(%rdi), %rax
-	mov 176(%rdi), %raxmkdir -
-	mov 184(%rdi), %rax
-	mov 192(%rdi), %rax
-	mov 200(%rdi), %rax
-	mov 208(%rdi), %rax
-	mov 216(%rdi), %rax
-	mov 224(%rdi), %rax
-	mov 232(%rdi), %rax
-	mov 240(%rdi), %rax
-	mov 248(%rdi), %rax
-
-	add $32, %rsi # increment index
-	add $256, %rdi # increment pointer
-	cmp %rsi, %rdx # if %rsi == %rdx, break
-	jge asm_read_pass_loop
-
-	xor %rsi, %rsi # zero out the index
-	lea (%rcx, %rsi, 4), %rdi # reset pointer
-	sub $1, %r14 # decrement iterations
-	jnz asm_read_pass_loop # if iterations != 0, loop
-
-	// restore registers
-	pop %rbx
-	pop %rsi
-	pop %rdi
-	pop %r14
-
-	mov (%rsp), %rax
-	mov %rax, 20(%rsp)
-	add $20, %rsp
-	fld1
-	ret $0x8
-
-avx_asm_read:
   push %rsi
   push %rdi
   push %rbx
@@ -593,7 +519,7 @@ sse_ntwrite_iteration_count:
   pop %rbx
   pop %rdi
   pop %rsi
-  ret
+  ret 
 
 
 avx512_read:
@@ -851,7 +777,7 @@ repmovsd_copy_pass_loop:
   pop %r13
   pop %r14
   pop %r15
-  ret
+  ret 
 
 repstosb_write:
   push %r15
@@ -878,7 +804,7 @@ repstosb_copy_pass_loop:
   pop %r13
   pop %r14
   pop %r15
-  ret
+  ret  
 
 repstosd_write:
   push %r15
@@ -904,7 +830,7 @@ repstosd_copy_pass_loop:
   pop %r13
   pop %r14
   pop %r15
-  ret
+  ret   
 
 
 /* Tests for cache bank conflicts by reading from two locations, spaced by some
@@ -922,7 +848,7 @@ readbankconflict:
    push %r12
    mov $1, %rax
    cmp %r8, %rdx  /* basic check - subtract load spacing from array len */
-   jle readbankconflict_end /* exit immrdiately if we don't have enough space to iterate */
+   jle readbankconflict_end /* exit immediately if we don't have enough space to iterate */
    xor %rax, %rax
    mov %rcx, %rdi
    mov %rcx, %rsi
@@ -978,7 +904,7 @@ readbankconflict128:
    push %r12
    mov $1, %rax
    cmp %r8, %rdx  /* basic check - subtract load spacing from array len */
-   jle readbankconflict128_end /* exit immrdiately if we don't have enough space to iterate */
+   jle readbankconflict128_end /* exit immediately if we don't have enough space to iterate */
    xor %rax, %rax
    mov %rcx, %rdi
    mov %rcx, %rsi
@@ -1023,4 +949,4 @@ readbankconflict128_end:
    pop %rsi
    pop %rdi
    pop %rbx
-   ret
+   ret 
