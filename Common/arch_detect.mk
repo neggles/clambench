@@ -1,28 +1,36 @@
-TARGET ?= amd64
-
+# detect target
+DEF_TARGET := amd64
 ifeq ($(OS),Windows_NT)
-    TARGET = w64
+    DEF_TARGET := w64
 else
     UNAME_M := $(shell uname -m)
-    ifeq ($(UNAME_M),x86_64)
-        TARGET = amd64
-    endif
-    ifeq ($(UNAME_M),aarch64)
-        TARGET = aarch64
-    endif
-    ifeq ($(UNAME_M),riscv64)
-        TARGET = riscv64
-    endif
     UNAME_S := $(shell uname -s)
+
+    ifeq ($(UNAME_M),x86_64)
+        DEF_TARGET := amd64
+    else ifeq ($(UNAME_M),aarch64)
+        DEF_TARGET := aarch64
+    else ifeq ($(UNAME_M),riscv64)
+        DEF_TARGET := riscv64
+    else ifeq ($(UNAME_M),powerpc64)
+        DEF_TARGET := ppc64
+    else ifeq ($(UNAME_M),ppc64)
+        DEF_TARGET := ppc64
+    endif
+
     ifeq ($(UNAME_S),Darwin)
-    TARGET = darwin
+        DEF_TARGET := darwin
     endif
 endif
 
-amd64: CC = x86_64-linux-gnu-gcc
-amd64_numa: CC = x86_64-linux-gnu-gcc
+# only set TARGET if the user did not specify one
+TARGET ?= $(DEF_TARGET)
+
+amd64: CC := x86_64-linux-gnu-gcc
+amd64_numa: CC := x86_64-linux-gnu-gcc
 aarch64: CC := aarch64-linux-gnu-gcc
-aarch64_numa: CC = aarch64-linux-gnu-gcc
-riscv64: CC = riscv64-linux-gnu-gcc
-w64: CC = x86_64-w64-mingw32-gcc
-darwin: CC = clang
+aarch64_numa: CC := aarch64-linux-gnu-gcc
+riscv64: CC := riscv64-linux-gnu-gcc
+w64: CC := x86_64-w64-mingw32-gcc
+darwin: CC := clang
+ppc64: CC := powerpc64-linux-gnu-gcc

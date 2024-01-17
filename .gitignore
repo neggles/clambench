@@ -585,14 +585,10 @@ dkms.conf
 **/*generatednasm*
 clammicrobench/*.asm
 
-# Memory Bandwidth tool
-MemoryBandwidth/MemoryBandwidth*
-!MemoryBandwidth/MemoryBandwidth*.c
-!MemoryBandwidth/MemoryBandwidth*.s
-# Memory Latency tool
-MemoryLatency/MemoryLatency*
-!MemoryLatency/MemoryLatency*.c
-!MemoryLatency/MemoryLatency*.s
+# generated test asm
+/**/*_tests.s
+/**/*_tests.asm
+
 
 # local misc and temp
 /temp/
