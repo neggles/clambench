@@ -1,3 +1,5 @@
+.arch armv9-a+crc+crypto
+.file "arm_instructionrate.s"
 .text
 
 .global clktest
@@ -141,26 +143,9 @@ clktest:
   mov x14, 20
   eor x13, x13, x13
 clktest_loop:
+.rept 20
   add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
-  add x13, x13, x15
+.endr
   sub x0, x0, x14
   cbnz x0, clktest_loop
   ldp x12, x13, [sp, #0x20]
@@ -169,46 +154,18 @@ clktest_loop:
   ret
 
 _noptest:
+.set nopcount, 30
 noptest:
   sub sp, sp, #0x30
   stp x14, x15, [sp, #0x10]
   stp x12, x13, [sp, #0x20]
   mov x15, 1
-  mov x14, 30
+  mov x14, nopcount
   eor x13, x13, x13
 noptest_loop:
+.rept nopcount
   nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
-  nop
+.endr
   sub x0, x0, x14
   cbnz x0, noptest_loop
   ldp x12, x13, [sp, #0x20]
@@ -218,57 +175,35 @@ noptest_loop:
 
 _addtest:
 addtest:
-  sub sp, sp, #0x50
-  stp x14, x15, [sp, #0x10]
-  stp x12, x13, [sp, #0x20]
-  stp x10, x11, [sp, #0x30]
-  stp x8, x9, [sp, #0x40]
-  mov x15, 1
-  mov x14, 30
-  eor x13, x13, x13
-  eor x12, x12, x12
-  eor x11, x11, x11
-  eor x10, x10, x10
-  eor x9, x9, x9
+// make space on stack
+  sub sp, sp, #0x60
+// save registers x19 to x28
+  stp x27, x28, [sp, #0x10]
+  stp x25, x26, [sp, #0x20]
+  stp x23, x24, [sp, #0x30]
+  stp x21, x22, [sp, #0x40]
+  stp x19, x20, [sp, #0x50]
+// clear registers x9-13 and x19-28
+.irp reg, 9, 10, 11, 12, 13, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
+  eor x&reg, x\reg, x\reg
+.endr
+  mov x15, 1  // we'll add 1 each time
+  mov x14, 50 // 50 adds per loop
 addtest_loop:
-  add x13, x13, x15
-  add x12, x12, x15
-  add x11, x11, x15
-  add x10, x10, x15
-  add x9, x9, x15
-  add x13, x13, x15
-  add x12, x12, x15
-  add x11, x11, x15
-  add x10, x10, x15
-  add x9, x9, x15
-  add x13, x13, x15
-  add x12, x12, x15
-  add x11, x11, x15
-  add x10, x10, x15
-  add x9, x9, x15
-  add x13, x13, x15
-  add x12, x12, x15
-  add x11, x11, x15
-  add x10, x10, x15
-  add x9, x9, x15
-  add x13, x13, x15
-  add x12, x12, x15
-  add x11, x11, x15
-  add x10, x10, x15
-  add x9, x9, x15
-  add x13, x13, x15
-  add x12, x12, x15
-  add x11, x11, x15
-  add x10, x10, x15
-  add x9, x9, x15
-  sub x0, x0, x14
-  cbnz x0, addtest_loop
-  ldp x8, x9, [sp, #0x40]
-  ldp x10, x11, [sp, #0x30]
-  ldp x12, x13, [sp, #0x20]
-  ldp x14, x15, [sp, #0x10]
-  add sp, sp, #0x50
-  ret 
+.irp reg, 9, 10, 11, 12, 13, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 9, 10, 11, 12, 13, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 9, 10, 11, 12, 13, 19, 20, 21, 22, 23
+  add x\reg, x\reg, x15
+.endr
+  sub x0, x0, x14 // decrement loop counter
+  cbnz x0, addtest_loop // loop if not zero
+# restore registers x19 to x28
+  ldp x19, x20, [sp, #0x50]
+  ldp x21, x22, [sp, #0x40]
+  ldp x23, x24, [sp, #0x30]
+  ldp x25, x26, [sp, #0x20]
+  ldp x27, x28, [sp, #0x10]
+# clean up stack
+  add sp, sp, #0x60
+  ret
 
 _maddaddtest:
 maddaddtest:
@@ -293,19 +228,19 @@ maddaddtest_loop:
   add x13, x13, x15
   add x12, x12, x15
   add x11, x11, x15
-  madd x10, x8, x0, x15 
+  madd x10, x8, x0, x15
   add x13, x13, x15
   add x12, x12, x15
   add x11, x11, x15
-  madd x10, x8, x0, x15  
+  madd x10, x8, x0, x15
   add x13, x13, x15
   add x12, x12, x15
   add x11, x11, x15
-  madd x10, x8, x0, x15  
+  madd x10, x8, x0, x15
   add x13, x13, x15
   add x12, x12, x15
   add x11, x11, x15
-  madd x10, x8, x0, x15  
+  madd x10, x8, x0, x15
   sub x0, x0, x14
   cbnz x0, maddaddtest_loop
   ldp x8, x9, [sp, #0x40]
@@ -313,7 +248,7 @@ maddaddtest_loop:
   ldp x12, x13, [sp, #0x20]
   ldp x14, x15, [sp, #0x10]
   add sp, sp, #0x50
-  ret 
+  ret
 
 _eortest:
 eortest:
@@ -388,32 +323,32 @@ cmptest_loop:
   cmp x12, x12
   cmp x11, x11
   cmp x10, x10
-  cmp x9, x9 
+  cmp x9, x9
   cmp x13, x13
   cmp x12, x12
   cmp x11, x11
   cmp x10, x10
-  cmp x9, x9 
+  cmp x9, x9
   cmp x13, x13
   cmp x12, x12
   cmp x11, x11
   cmp x10, x10
-  cmp x9, x9 
+  cmp x9, x9
   cmp x13, x13
   cmp x12, x12
   cmp x11, x11
   cmp x10, x10
-  cmp x9, x9 
+  cmp x9, x9
   cmp x13, x13
   cmp x12, x12
   cmp x11, x11
   cmp x10, x10
-  cmp x9, x9 
+  cmp x9, x9
   cmp x13, x13
   cmp x12, x12
   cmp x11, x11
   cmp x10, x10
-  cmp x9, x9 
+  cmp x9, x9
   sub x0, x0, x14
   cbnz x0, cmptest_loop
   ldp x8, x9, [sp, #0x40]
@@ -421,7 +356,7 @@ cmptest_loop:
   ldp x12, x13, [sp, #0x20]
   ldp x14, x15, [sp, #0x10]
   add sp, sp, #0x50
-  ret 
+  ret
 
 _addmultest:
 addmultest:
@@ -516,7 +451,7 @@ addmul21test_loop:
   ldp x12, x13, [sp, #0x20]
   ldp x14, x15, [sp, #0x10]
   add sp, sp, #0x50
-  ret 
+  ret
 
 _mul32test:
 mul32test:
@@ -861,34 +796,68 @@ _vecmul128test:
 vecmul128test:
   sub sp, sp, #0x20
   stp x14, x15, [sp, #0x10]
-  mov x14, 20
+  mov x14, 40
+  ldr q11, [x1]
+  ldr q12, [x1]
+  ldr q13, [x1]
+  ldr q14, [x1]
+  ldr q15, [x1]
   ldr q16, [x1]
   ldr q17, [x1]
   ldr q18, [x1]
   ldr q19, [x1]
   ldr q20, [x1]
   ldr q21, [x1]
+  ldr q22, [x1]
+  ldr q23, [x1]
+  ldr q24, [x1]
+  ldr q25, [x1]
+  ldr q26, [x1]
+  ldr q27, [x1]
+  ldr q28, [x1]
+  ldr q29, [x1]
+  ldr q30, [x1]
 vecmul128test_loop:
+  mul v11.4s, v11.4s, v11.4s
+  mul v12.4s, v12.4s, v12.4s
+  mul v13.4s, v13.4s, v13.4s
+  mul v14.4s, v14.4s, v14.4s
+  mul v15.4s, v15.4s, v15.4s
   mul v16.4s, v16.4s, v16.4s
   mul v17.4s, v17.4s, v17.4s
   mul v18.4s, v18.4s, v18.4s
   mul v19.4s, v19.4s, v19.4s
   mul v20.4s, v20.4s, v20.4s
   mul v21.4s, v21.4s, v21.4s
+  mul v22.4s, v22.4s, v22.4s
+  mul v23.4s, v23.4s, v23.4s
+  mul v24.4s, v24.4s, v24.4s
+  mul v25.4s, v25.4s, v25.4s
+  mul v26.4s, v26.4s, v26.4s
+  mul v27.4s, v27.4s, v27.4s
+  mul v28.4s, v28.4s, v28.4s
+  mul v29.4s, v29.4s, v29.4s
+  mul v30.4s, v30.4s, v30.4s
+  mul v11.4s, v11.4s, v11.4s
+  mul v12.4s, v12.4s, v12.4s
+  mul v13.4s, v13.4s, v13.4s
+  mul v14.4s, v14.4s, v14.4s
+  mul v15.4s, v15.4s, v15.4s
   mul v16.4s, v16.4s, v16.4s
   mul v17.4s, v17.4s, v17.4s
   mul v18.4s, v18.4s, v18.4s
   mul v19.4s, v19.4s, v19.4s
   mul v20.4s, v20.4s, v20.4s
   mul v21.4s, v21.4s, v21.4s
-  mul v16.4s, v16.4s, v16.4s
-  mul v17.4s, v17.4s, v17.4s
-  mul v18.4s, v18.4s, v18.4s
-  mul v19.4s, v19.4s, v19.4s
-  mul v20.4s, v20.4s, v20.4s
-  mul v21.4s, v21.4s, v21.4s
-  mul v16.4s, v16.4s, v16.4s
-  mul v17.4s, v17.4s, v17.4s
+  mul v22.4s, v22.4s, v22.4s
+  mul v23.4s, v23.4s, v23.4s
+  mul v24.4s, v24.4s, v24.4s
+  mul v25.4s, v25.4s, v25.4s
+  mul v26.4s, v26.4s, v26.4s
+  mul v27.4s, v27.4s, v27.4s
+  mul v28.4s, v28.4s, v28.4s
+  mul v29.4s, v29.4s, v29.4s
+  mul v30.4s, v30.4s, v30.4s
   sub x0, x0, x14
   cbnz x0, vecmul128test_loop
   ldp x14, x15, [sp, #0x10]
@@ -974,7 +943,12 @@ _vecfma128test:
 vecfma128test:
   sub sp, sp, #0x20
   stp x14, x15, [sp, #0x10]
-  mov x14, 20
+  mov x14, 16
+  ldr q11, [x1]
+  ldr q12, [x1]
+  ldr q13, [x1]
+  ldr q14, [x1]
+  ldr q15, [x1]
   ldr q16, [x1]
   ldr q17, [x1]
   ldr q18, [x1]
@@ -985,27 +959,28 @@ vecfma128test:
   ldr q23, [x1]
   ldr q24, [x1]
   ldr q25, [x1]
+  ldr q26, [x1]
+  ldr q27, [x1]
+  ldr q28, [x1]
+  ldr q29, [x1]
+  ldr q30, [x1]
 vecfma128test_loop:
-  fmla v16.4s, v16.4s, v16.4s
-  fmla v17.4s, v17.4s, v17.4s
-  fmla v18.4s, v18.4s, v18.4s
-  fmla v19.4s, v19.4s, v19.4s
-  fmla v20.4s, v20.4s, v20.4s
-  fmla v21.4s, v21.4s, v21.4s
-  fmla v22.4s, v22.4s, v22.4s
-  fmla v23.4s, v23.4s, v23.4s
-  fmla v24.4s, v24.4s, v24.4s
-  fmla v25.4s, v25.4s, v25.4s
-  fmla v16.4s, v16.4s, v16.4s
-  fmla v17.4s, v17.4s, v17.4s
-  fmla v18.4s, v18.4s, v18.4s
-  fmla v19.4s, v19.4s, v19.4s
-  fmla v20.4s, v20.4s, v20.4s
-  fmla v21.4s, v21.4s, v21.4s
-  fmla v22.4s, v22.4s, v22.4s
-  fmla v23.4s, v23.4s, v23.4s
-  fmla v24.4s, v24.4s, v24.4s
-  fmla v25.4s, v25.4s, v25.4s
+  fmla v11.4s, v21.4s, v22.4s
+  fmla v12.4s, v21.4s, v22.4s
+  fmla v13.4s, v21.4s, v22.4s
+  fmla v14.4s, v21.4s, v22.4s
+  fmla v15.4s, v21.4s, v22.4s
+  fmla v16.4s, v21.4s, v22.4s
+  fmla v17.4s, v21.4s, v22.4s
+  fmla v18.4s, v21.4s, v22.4s
+  fmla v19.4s, v21.4s, v22.4s
+  fmla v20.4s, v21.4s, v22.4s
+  fmla v23.4s, v21.4s, v22.4s
+  fmla v24.4s, v21.4s, v22.4s
+  fmla v25.4s, v21.4s, v22.4s
+  fmla v26.4s, v21.4s, v22.4s
+  fmla v27.4s, v21.4s, v22.4s
+  fmla v28.4s, v21.4s, v22.4s
   sub x0, x0, x14
   cbnz x0, vecfma128test_loop
   ldp x14, x15, [sp, #0x10]
@@ -1133,7 +1108,7 @@ _vecfadd128test:
 vecfadd128test:
   sub sp, sp, #0x20
   stp x14, x15, [sp, #0x10]
-  mov x14, 20
+  mov x14, 40
   ldr q16, [x1]
   ldr q17, [x1]
   ldr q18, [x1]
@@ -1141,26 +1116,46 @@ vecfadd128test:
   ldr q20, [x1]
   ldr q21, [x1]
 vecfadd128test_loop:
+  fadd v11.4s, v11.4s, v11.4s
+  fadd v12.4s, v12.4s, v12.4s
+  fadd v13.4s, v13.4s, v13.4s
+  fadd v14.4s, v14.4s, v14.4s
+  fadd v15.4s, v15.4s, v15.4s
   fadd v16.4s, v16.4s, v16.4s
   fadd v17.4s, v17.4s, v17.4s
   fadd v18.4s, v18.4s, v18.4s
   fadd v19.4s, v19.4s, v19.4s
   fadd v20.4s, v20.4s, v20.4s
   fadd v21.4s, v21.4s, v21.4s
+  fadd v22.4s, v22.4s, v22.4s
+  fadd v23.4s, v23.4s, v23.4s
+  fadd v24.4s, v24.4s, v24.4s
+  fadd v25.4s, v25.4s, v25.4s
+  fadd v26.4s, v26.4s, v26.4s
+  fadd v27.4s, v27.4s, v27.4s
+  fadd v28.4s, v28.4s, v28.4s
+  fadd v29.4s, v29.4s, v29.4s
+  fadd v30.4s, v30.4s, v30.4s
+  fadd v11.4s, v11.4s, v11.4s
+  fadd v12.4s, v12.4s, v12.4s
+  fadd v13.4s, v13.4s, v13.4s
+  fadd v14.4s, v14.4s, v14.4s
+  fadd v15.4s, v15.4s, v15.4s
   fadd v16.4s, v16.4s, v16.4s
   fadd v17.4s, v17.4s, v17.4s
   fadd v18.4s, v18.4s, v18.4s
   fadd v19.4s, v19.4s, v19.4s
   fadd v20.4s, v20.4s, v20.4s
   fadd v21.4s, v21.4s, v21.4s
-  fadd v16.4s, v16.4s, v16.4s
-  fadd v17.4s, v17.4s, v17.4s
-  fadd v18.4s, v18.4s, v18.4s
-  fadd v19.4s, v19.4s, v19.4s
-  fadd v20.4s, v20.4s, v20.4s
-  fadd v21.4s, v21.4s, v21.4s
-  fadd v16.4s, v16.4s, v16.4s
-  fadd v17.4s, v17.4s, v17.4s
+  fadd v22.4s, v22.4s, v22.4s
+  fadd v23.4s, v23.4s, v23.4s
+  fadd v24.4s, v24.4s, v24.4s
+  fadd v25.4s, v25.4s, v25.4s
+  fadd v26.4s, v26.4s, v26.4s
+  fadd v27.4s, v27.4s, v27.4s
+  fadd v28.4s, v28.4s, v28.4s
+  fadd v29.4s, v29.4s, v29.4s
+  fadd v30.4s, v30.4s, v30.4s
   sub x0, x0, x14
   cbnz x0, vecfadd128test_loop
   ldp x14, x15, [sp, #0x10]
@@ -1204,7 +1199,7 @@ _vecfmul128test:
 vecfmul128test:
   sub sp, sp, #0x20
   stp x14, x15, [sp, #0x10]
-  mov x14, 20
+  mov x14, 40
   ldr q16, [x1]
   ldr q17, [x1]
   ldr q18, [x1]
@@ -1212,26 +1207,46 @@ vecfmul128test:
   ldr q20, [x1]
   ldr q21, [x1]
 vecfmul128test_loop:
+  fmul v11.4s, v11.4s, v11.4s
+  fmul v12.4s, v12.4s, v12.4s
+  fmul v13.4s, v13.4s, v13.4s
+  fmul v14.4s, v14.4s, v14.4s
+  fmul v15.4s, v15.4s, v15.4s
   fmul v16.4s, v16.4s, v16.4s
   fmul v17.4s, v17.4s, v17.4s
   fmul v18.4s, v18.4s, v18.4s
   fmul v19.4s, v19.4s, v19.4s
   fmul v20.4s, v20.4s, v20.4s
   fmul v21.4s, v21.4s, v21.4s
+  fmul v22.4s, v22.4s, v22.4s
+  fmul v23.4s, v23.4s, v23.4s
+  fmul v24.4s, v24.4s, v24.4s
+  fmul v25.4s, v25.4s, v25.4s
+  fmul v26.4s, v26.4s, v26.4s
+  fmul v27.4s, v27.4s, v27.4s
+  fmul v28.4s, v28.4s, v28.4s
+  fmul v29.4s, v29.4s, v29.4s
+  fmul v30.4s, v30.4s, v30.4s
+  fmul v11.4s, v11.4s, v11.4s
+  fmul v12.4s, v12.4s, v12.4s
+  fmul v13.4s, v13.4s, v13.4s
+  fmul v14.4s, v14.4s, v14.4s
+  fmul v15.4s, v15.4s, v15.4s
   fmul v16.4s, v16.4s, v16.4s
   fmul v17.4s, v17.4s, v17.4s
   fmul v18.4s, v18.4s, v18.4s
   fmul v19.4s, v19.4s, v19.4s
   fmul v20.4s, v20.4s, v20.4s
   fmul v21.4s, v21.4s, v21.4s
-  fmul v16.4s, v16.4s, v16.4s
-  fmul v17.4s, v17.4s, v17.4s
-  fmul v18.4s, v18.4s, v18.4s
-  fmul v19.4s, v19.4s, v19.4s
-  fmul v20.4s, v20.4s, v20.4s
-  fmul v21.4s, v21.4s, v21.4s
-  fmul v16.4s, v16.4s, v16.4s
-  fmul v17.4s, v17.4s, v17.4s
+  fmul v22.4s, v22.4s, v22.4s
+  fmul v23.4s, v23.4s, v23.4s
+  fmul v24.4s, v24.4s, v24.4s
+  fmul v25.4s, v25.4s, v25.4s
+  fmul v26.4s, v26.4s, v26.4s
+  fmul v27.4s, v27.4s, v27.4s
+  fmul v28.4s, v28.4s, v28.4s
+  fmul v29.4s, v29.4s, v29.4s
+  fmul v30.4s, v30.4s, v30.4s
   sub x0, x0, x14
   cbnz x0, vecfmul128test_loop
   ldp x14, x15, [sp, #0x10]
@@ -2193,7 +2208,7 @@ mixaddjmp21test:
   stp x14, x15, [sp, #0x10]
   stp x12, x13, [sp, #0x20]
   stp x10, x11, [sp, #0x30]
-  stp x8, x9, [sp, #0x40] 
+  stp x8, x9, [sp, #0x40]
   mov x8, 7
   mov x9, 6
   mov x10, 1
@@ -2206,19 +2221,19 @@ mixaddjmp21test_loop:
   add x10, x10, x15
   add x11, x11, x15
   cbz x0, mixaddjmp21test_jellydonut
-  
+
   add x12, x12, x15
   add x13, x13, x15
   cbz x0, mixaddjmp21test_jellydonut
-  
+
   add x9, x9, x15
   add x8, x8, x15
   cbz x0, mixaddjmp21test_jellydonut
-  
+
   add x10, x10, x15
   add x11, x11, x15
   cbz x0, mixaddjmp21test_jellydonut
-  
+
   add x12, x12, x15
   add x13, x13, x15
   cbz x0, mixaddjmp21test_jellydonut
@@ -2231,7 +2246,7 @@ mixaddjmp21test_jellydonut:
   ldp x10, x11, [sp, #0x30]
   ldp x12, x13, [sp, #0x20]
   ldp x14, x15, [sp, #0x10]
-  add sp, sp, #0x50 
+  add sp, sp, #0x50
   ret
 
 _mixmulrortest:
@@ -2540,7 +2555,7 @@ aesetest:
   ldr q18, [x1]
   ldr q19, [x1]
   ldr q20, [x1]
-  ldr q21, [x1] 
+  ldr q21, [x1]
   mov x14, 20
 aesetest_loop:
   aese v0.16b, v16.16b
@@ -2552,17 +2567,17 @@ aesetest_loop:
   aese v1.16b, v17.16b
   aese v2.16b, v18.16b
   aese v3.16b, v19.16b
-  aese v4.16b, v20.16b 
+  aese v4.16b, v20.16b
   aese v0.16b, v16.16b
   aese v1.16b, v17.16b
   aese v2.16b, v18.16b
   aese v3.16b, v19.16b
-  aese v4.16b, v20.16b  
+  aese v4.16b, v20.16b
   aese v0.16b, v16.16b
   aese v1.16b, v17.16b
   aese v2.16b, v18.16b
   aese v3.16b, v19.16b
-  aese v4.16b, v20.16b 
+  aese v4.16b, v20.16b
   sub x0, x0, x14
   cbnz x0, aesetest_loop
   add sp, sp, #0x50
@@ -2576,7 +2591,7 @@ mixaesevecadd128test:
   ldr q18, [x1]
   ldr q19, [x1]
   ldr q20, [x1]
-  ldr q21, [x1] 
+  ldr q21, [x1]
   mov x14, 20
 mixaesevecadd128test_loop:
   aese v0.16b, v16.16b
@@ -2598,11 +2613,11 @@ mixaesevecadd128test_loop:
   aese v3.16b, v19.16b
   add v31.4s, v12.4s, v16.4s
   aese v4.16b, v20.16b
-  add v30.4s, v13.4s, v16.4s 
+  add v30.4s, v13.4s, v16.4s
   sub x0, x0, x14
   cbnz x0, mixaesevecadd128test_loop
   add sp, sp, #0x50
-  ret 
+  ret
 
 _pmulltest:
 pmulltest:
@@ -2612,7 +2627,7 @@ pmulltest:
   ldr q18, [x1]
   ldr q19, [x1]
   ldr q20, [x1]
-  ldr q21, [x1] 
+  ldr q21, [x1]
   mov x14, 20
 pmulltest_loop:
   pmull v0.1q, v16.1d, v17.1d
@@ -2624,21 +2639,21 @@ pmulltest_loop:
   pmull v1.1q, v16.1d, v17.1d
   pmull v2.1q, v16.1d, v17.1d
   pmull v3.1q, v16.1d, v17.1d
-  pmull v4.1q, v16.1d, v17.1d 
+  pmull v4.1q, v16.1d, v17.1d
   pmull v0.1q, v16.1d, v17.1d
   pmull v1.1q, v16.1d, v17.1d
   pmull v2.1q, v16.1d, v17.1d
   pmull v3.1q, v16.1d, v17.1d
-  pmull v4.1q, v16.1d, v17.1d 
+  pmull v4.1q, v16.1d, v17.1d
   pmull v0.1q, v16.1d, v17.1d
   pmull v1.1q, v16.1d, v17.1d
   pmull v2.1q, v16.1d, v17.1d
   pmull v3.1q, v16.1d, v17.1d
-  pmull v4.1q, v16.1d, v17.1d 
+  pmull v4.1q, v16.1d, v17.1d
   sub x0, x0, x14
   cbnz x0, pmulltest_loop
   add sp, sp, #0x50
-  ret 
+  ret
 
 _mixpmulladd128test:
 mixpmulladd128test:
@@ -2648,7 +2663,7 @@ mixpmulladd128test:
   ldr q18, [x1]
   ldr q19, [x1]
   ldr q20, [x1]
-  ldr q21, [x1] 
+  ldr q21, [x1]
   mov x14, 20
 mixpmulladd128test_loop:
   pmull v0.1q, v16.1d, v17.1d
@@ -2670,8 +2685,8 @@ mixpmulladd128test_loop:
   pmull v3.1q, v16.1d, v17.1d
   add v31.4s, v9.4s, v16.4s
   pmull v4.1q, v16.1d, v17.1d
-  add v30.4s, v9.4s, v16.4s 
+  add v30.4s, v9.4s, v16.4s
   sub x0, x0, x14
   cbnz x0, mixpmulladd128test_loop
   add sp, sp, #0x50
-  ret 
+  ret
