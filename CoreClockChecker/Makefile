@@ -1,23 +1,17 @@
 include ../Common/arch_detect.mk
 
-CFLAGS = -O3
-LDFLAGS = -lm
+ifeq ($(TARGET),amd64)
+PROGRAMS := BoostClockChecker_amd64
+SOURCES_BoostClockChecker_amd64 := BoostClockChecker.c BoostClockChecker_x86.s
+PROGRAMS += CoreClockChecker_amd64
+SOURCES_CoreClockChecker_amd64 := CoreClockChecker.c CoreClockChecker_x86.s
+endif
+ifeq ($(TARGET),aarch64)
+PROGRAMS := BoostClockChecker_aarch64
+SOURCES_BoostClockChecker_aarch64 := BoostClockChecker.c BoostClockChecker_arm.s
+endif
 
-all: $(TARGET)
-
-amd64:
-	$(CC) $(CFLAGS) -pthread CoreClockChecker.c CoreClockChecker_x86.s -o CoreClockChecker_amd64 $(LDFLAGS)
-	$(CC) $(CFLAGS) BoostClockChecker.c BoostClockChecker_x86.s -o BoostClockChecker_amd64 $(LDFLAGS)
-
-aarch64:
-	$(CC) $(CFLAGS) BoostClockChecker.c BoostClockChecker_arm.s -o BoostClockChecker_aarch64 $(LDFLAGS)
-
-w64:
-	$(CC) $(CFLAGS) BoostClockChecker.c BoostClockChecker_x86.s -o BoostClockChecker_w64.exe $(LDFLAGS)
-
-ci: amd64 aarch64 w64
-
-clean:
-	rm -f *.o && find . -type f -executable -delete
-
-.PHONY: all ci clean
+CLEAN_PROGRAMS := BoostClockChecker_amd64 CoreClockChecker_amd64 BoostClockChecker_aarch64 BoostClockChecker_ppc64le
+WIN_PROGRAM := BoostClockChecker_w64.exe
+WIN_SOURCES := BoostClockChecker.c BoostClockChecker_x86.s
+include ../Common/c-benchmark.mk

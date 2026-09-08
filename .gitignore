@@ -392,3 +392,12 @@ FodyWeavers.xsd
 # JetBrains Rider
 .idea/
 *.sln.iml
+
+# C benchmark and correctness-test outputs
+/*/*_amd64
+/*/*_aarch64
+/*/*_ppc64le
+/*/*_riscv64
+/mt_instructionrate/*_mt_instructionrate
+/tests/power-memory
+/tests/power-loaded

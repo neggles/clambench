@@ -1,30 +1,24 @@
 include ../Common/arch_detect.mk
 
-CFLAGS = -O3
+ifeq ($(TARGET),amd64)
+PROGRAMS := InstructionRate_amd64
+SOURCES_InstructionRate_amd64 := x86_instructionrate.c x86_instructionrate.s
+endif
+ifeq ($(TARGET),aarch64)
+PROGRAMS := InstructionRate_aarch64
+SOURCES_InstructionRate_aarch64 := arm_instructionrate.c arm_instructionrate.s
+endif
+ifeq ($(TARGET),riscv64)
+PROGRAMS := InstructionRate_riscv64
+SOURCES_InstructionRate_riscv64 := riscv_instructionrate.c riscv_instructionrate.s
+endif
+ifeq ($(TARGET),amd64)
+PROGRAMS += InstructionRateFusion_amd64
+SOURCES_InstructionRateFusion_amd64 := x86_fusion.c x86_fusion.s
+endif
+amd64_fusion: InstructionRateFusion_amd64
 
-all: $(TARGET)
-
-amd64:
-	$(CC) $(CFLAGS) x86_instructionrate.s x86_instructionrate.c -o InstructionRate_amd64 $(LDFLAGS)
-
-aarch64:
-	$(CC) $(CFLAGS) -march=native -pthread arm_instructionrate.s arm_instructionrate.c -o InstructionRate_aarch64 $(LDFLAGS)
-
-riscv64:
-	$(CC) $(CFLAGS) -march=rv64gc -pthread riscv_instructionrate.s riscv_instructionrate.c -o InstructionRate_riscv64 $(LDFLAGS)
-
-termux:
-	clang -march=armv8+aes arm_instructionrate.s arm_instructionrate.c -o InstructionRate_aarch64 $(LDFLAGS)
-
-amd64_fusion:
-	$(CC) $(CFLAGS) x86_fusion.s x86_fusion.c -o InstructionRateFusion_amd64 $(LDFLAGS)
-
-w64:
-	$(CC) $(CFLAGS) x86_instructionrate.c x86_instructionrate.s -o InstructionRate_w64.exe $(LDFLAGS)
-
-ci: amd64 amd64_fusion aarch64 riscv64 w64
-
-clean:
-	rm -f *.o && find . -type f -executable -delete
-
-.PHONY: all ci clean
+CLEAN_PROGRAMS := InstructionRate_amd64 InstructionRate_aarch64 InstructionRate_ppc64le InstructionRate_riscv64 InstructionRateFusion_amd64
+WIN_PROGRAM := InstructionRate_w64.exe
+WIN_SOURCES := x86_instructionrate.c x86_instructionrate.s
+include ../Common/c-benchmark.mk

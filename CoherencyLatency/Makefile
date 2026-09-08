@@ -1,26 +1,19 @@
 include ../Common/arch_detect.mk
 
-CFLAGS = -pthread -O3
+ifeq ($(TARGET),amd64)
+PROGRAMS := CoherencyLatency_amd64
+SOURCES_CoherencyLatency_amd64 := PThreadsCoherencyLatency.c
+endif
+ifeq ($(TARGET),aarch64)
+PROGRAMS := CoherencyLatency_aarch64
+SOURCES_CoherencyLatency_aarch64 := PThreadsCoherencyLatency.c
+endif
+ifeq ($(TARGET),riscv64)
+PROGRAMS := CoherencyLatency_riscv64
+SOURCES_CoherencyLatency_riscv64 := PThreadsCoherencyLatency.c
+endif
 
-all: $(TARGET)
-
-amd64:
-	$(CC) $(CFLAGS) PThreadsCoherencyLatency.c -o CoherencyLatency_amd64 $(LDFLAGS)
-
-aarch64:
-	$(CC) $(CFLAGS) PThreadsCoherencyLatency.c -o CoherencyLatency_aarch64 $(LDFLAGS)
-
-riscv64:
-	$(CC) $(CFLAGS) PThreadsCoherencyLatency.c -o CoherencyLatency_riscv64 $(LDFLAGS)
-
-w64:
-	$(CC) $(CFLAGS) CoherencyLatency.cpp -o CoherencyLatency_w64.exe $(LDFLAGS)
-
-# w64 can build with mingw 11, which isn't available on jammy
-
-ci: amd64 aarch64 riscv64
-
-clean:
-	rm -rf *.o *.zip "ocl-icd-libopencl1*" "OpenCL-SDK*" && find . -type f -executable -delete
-
-.PHONY: all ci clean
+CLEAN_PROGRAMS := CoherencyLatency_amd64 CoherencyLatency_aarch64 CoherencyLatency_ppc64le CoherencyLatency_riscv64
+WIN_PROGRAM := CoherencyLatency_w64.exe
+WIN_SOURCES := CoherencyLatency.cpp
+include ../Common/c-benchmark.mk

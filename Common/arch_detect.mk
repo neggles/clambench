@@ -1,28 +1,19 @@
-TARGET ?= amd64
-
-ifeq ($(OS),Windows_NT)
-    TARGET = w64
+# Detect the compiler target, not the build host. Honour CC and TARGET overrides.
+COMPILER_TRIPLE := $(shell $(CC) -dumpmachine 2>/dev/null)
+ifndef TARGET
+ifneq ($(findstring mingw,$(COMPILER_TRIPLE)),)
+TARGET := w64
+else ifneq ($(findstring darwin,$(COMPILER_TRIPLE)),)
+TARGET := darwin
+else ifneq ($(filter x86_64%,$(COMPILER_TRIPLE)),)
+TARGET := amd64
+else ifneq ($(filter powerpc64le% ppc64le%,$(COMPILER_TRIPLE)),)
+TARGET := ppc64le
+else ifneq ($(filter aarch64% arm64%,$(COMPILER_TRIPLE)),)
+TARGET := aarch64
+else ifneq ($(filter riscv64%,$(COMPILER_TRIPLE)),)
+TARGET := riscv64
 else
-    UNAME_M := $(shell uname -m)
-    ifeq ($(UNAME_M),x86_64)
-        TARGET = amd64
-    endif
-    ifeq ($(UNAME_M),aarch64)
-        TARGET = aarch64
-    endif
-    ifeq ($(UNAME_M),riscv64)
-        TARGET = riscv64
-    endif
-    UNAME_S := $(shell uname -s)
-    ifeq ($(UNAME_S),Darwin)
-    TARGET = darwin
-    endif
+TARGET := unsupported
 endif
-
-amd64: CC = x86_64-linux-gnu-gcc
-amd64_numa: CC = x86_64-linux-gnu-gcc
-aarch64: CC := gcc
-aarch64_numa: CC = aarch64-linux-gnu-gcc
-riscv64: CC = riscv64-linux-gnu-gcc
-w64: CC = x86_64-w64-mingw32-gcc
-darwin: CC = clang
+endif

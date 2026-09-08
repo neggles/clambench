@@ -2,10 +2,18 @@ include Common/arch_detect.mk
 
 COMPONENTS = CoherencyLatency MemoryLatency MemoryBandwidth InstructionRate Meshsim CoreClockChecker GpuMemLatency
 
-all: $(COMPONENTS) 
+C_COMPONENTS = CoherencyLatency MemoryLatency MemoryBandwidth InstructionRate CoreClockChecker LoadedMemoryLatency mt_instructionrate
 
-ci:
-	for COMPONENT in $(COMPONENTS); do $(MAKE) -C $$COMPONENT ci; done
+all: c
+
+c: $(C_COMPONENTS)
+
+legacy-all: $(COMPONENTS)
+
+ci: c
+
+legacy-ci:
+	@set -e; for COMPONENT in $(COMPONENTS); do $(MAKE) -C $$COMPONENT ci; done
 
 package:
 	@sh Common/ci_package.sh
@@ -13,12 +21,12 @@ package:
 clean-package:
 	find . -maxdepth 1 -type d -name "clammarks-*" -exec rm -rf {} \; && rm -f "clammarks.txz"
 
-clean: 
-	for COMPONENT in $(COMPONENTS); do $(MAKE) -C $$COMPONENT clean; done
+clean:
+	@set -e; for COMPONENT in $(C_COMPONENTS); do $(MAKE) -C $$COMPONENT clean; done
 
-$(COMPONENTS): .FORCE
+$(sort $(COMPONENTS) $(C_COMPONENTS)): .FORCE
 	$(MAKE) -C $@ 
 
 .FORCE:
 
-.PHONY: all ci package clean-package clean
+.PHONY: all c legacy-all legacy-ci ci package clean-package clean
