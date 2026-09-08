@@ -22,7 +22,7 @@ clean-package:
 	find . -maxdepth 1 -type d -name "clammarks-*" -exec rm -rf {} \; && rm -f "clammarks.txz"
 
 clean:
-	@set -e; for COMPONENT in $(C_COMPONENTS); do $(MAKE) -C $$COMPONENT clean; done
+	@set -e; for COMPONENT in $(C_COMPONENTS) tests; do $(MAKE) -C $$COMPONENT clean; done
 
 $(sort $(COMPONENTS) $(C_COMPONENTS)): .FORCE
 	$(MAKE) -C $@ 
@@ -30,3 +30,7 @@ $(sort $(COMPONENTS) $(C_COMPONENTS)): .FORCE
 .FORCE:
 
 .PHONY: all c legacy-all legacy-ci ci package clean-package clean
+
+check:
+	$(MAKE) -C tests check
+.PHONY: check

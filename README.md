@@ -5,6 +5,29 @@ Basically my playground to microbenchmark various CPU-related things like ROB/re
 
 Feel free to try running the stuff here, but I highly suggest writing your own code because that'll provide a better understanding of the theory behind the benchmarks. Consider checking out https://github.com/travisdowns/robsize or https://github.com/Veedrac/microarchitecturometer.
 
+## Building the standalone C CPU benchmarks (Linux)
+
+```sh
+make -j c                              # native GCC; also the default target
+make -j c CC=clang                     # native Clang
+make -j c CC=powerpc64le-linux-gnu-gcc  # cross compile; compiler target detected
+make -j c CC='clang --target=powerpc64le-linux-gnu --sysroot=/path/to/sysroot'
+make -C MemoryLatency NUMA=1           # optional libnuma development package
+make check                            # native correctness tests, x86-64 or POWER
+```
+
+POWER builds target little-endian ELFv2 and POWER9 by default; use
+`POWER_CPU=power10` for a POWER10-only build. `TARGET=amd64` or `TARGET=ppc64le`
+can explicitly select sources, but must match the compiler. Clang cross linking
+also needs the target GNU runtime/linker (or a suitable LLVM runtime/linker).
+`CC`, `CPPFLAGS`, `CFLAGS`, `LDFLAGS` and `LDLIBS` are honoured. Like the original
+makefiles, these small programs rebuild on invocation, including flag changes.
+
+Outputs stay in their component directories. `make c` needs neither OpenCL nor
+C# tooling; `make legacy-all` retains the old component selection. See
+[PORTING.md](PORTING.md) for the benchmark inventory, supported POWER modes,
+validation results and hardware checks still needed.
+
 # Building Clammicrobench with Generated Code
 Get NASM (https://www.nasm.us/) and make sure it's in your path. Then things should build under Visual Studio 2022.
 

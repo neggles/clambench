@@ -401,3 +401,4 @@ FodyWeavers.xsd
 /mt_instructionrate/*_mt_instructionrate
 /tests/power-memory
 /tests/power-loaded
+/tests/*.o
