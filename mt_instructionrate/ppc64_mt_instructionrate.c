@@ -1,40 +1,21 @@
-extern uint64_t vec_int32_add_test(uint64_t iterations, void *data);
-extern uint64_t vec_int32_mul_test(uint64_t iterations, void *data);
-extern uint64_t vec_fp32_add_test(uint64_t iterations, void *data);
-extern uint64_t vec_fp32_fma_test(uint64_t iterations, void *data);
-extern uint64_t vec_fp32_isqrt_test(uint64_t iterations, void *data);
-extern uint64_t fp64_add_test(uint64_t iterations, void *data);
-extern uint64_t fp64_fma_test(uint64_t iterations, void *data);
+#include "../Common/power_kernels.h"
 
-void RunTests() {
-  uint64_t iterations = 3500000000;
-  int testDataLength = 256; 
-  uint32_t *intTestArr = (uint32_t *)malloc(sizeof(uint32_t) * testDataLength);
-  uint32_t *fpTestArr = (uint32_t *)malloc(sizeof(uint32_t) * testDataLength);
-  for (int i = 0; i < testDataLength; i++) {
-    intTestArr[i] = i;
-    fpTestArr[i] = i * 1.2f;
-  }
-
-  fprintf(stderr, "Measuring INT32 adds\n");
-  float int32adds = measureFunction(iterations, vec_int32_add_test, intTestArr);
-  float int32muls = measureFunction(iterations, vec_int32_mul_test, intTestArr);
-  float fp32adds = measureFunction(iterations, vec_fp32_add_test, fpTestArr);
-  float fp32fmas = measureFunction(iterations, vec_fp32_fma_test, fpTestArr);
-  float fp32isqrt = measureFunction(iterations, vec_fp32_isqrt_test, fpTestArr);
-  float fp64adds = measureFunction(iterations, fp64_add_test, fpTestArr);
-  float fp64fmas = measureFunction(iterations, fp64_fma_test, fpTestArr);
-
-  printf("-----GOPS/s-----\n");
-  printf("Altivec INT32 Add: %f\n", int32adds); 
-  printf("Altivec INT32 Multiply: %f\n", int32muls); 
-  printf("Altivec FP32 Add: %f\n", fp32adds);
-  printf("Altivec FP32 FMA: %f (%f GFLOPS)\n", fp32fmas, 2 * fp32fmas);
-  printf("Altivec FP32 Inverse Square Root: %f\n", fp32isqrt);
-  printf("FP64 Add: %f\n", fp64adds);
-  printf("FP64 FMA: %f (%f GFLOPS)\n", fp64fmas, 2 * fp64fmas);
-  
-  free(intTestArr);
-  free(fpTestArr); 
-  return;
+void RunTests(void) {
+    /* measureFunction counts instructions; vector results multiply by lanes.
+       FMA is one instruction/two FLOPs per lane, rsqrt is an estimate. */
+    double data[16] __attribute__((aligned(128)));
+    struct test { const char *name; uint64_t (*fn)(uint64_t, void *); int lanes; } tests[] = {
+        {"INT32 Add", vec_int32_add_test, 4},
+        {"INT32 Multiply", vec_int32_mul_test, 4},
+        {"FP32 Add", vec_fp32_add_test, 4},
+        {"FP32 FMA (2 FLOPs/op)", vec_fp32_fma_test, 4},
+        {"FP32 Reciprocal sqrt estimate", vec_fp32_isqrt_test, 4},
+        {"FP64 Add", fp64_add_test, 1},
+        {"FP64 FMA (2 FLOPs/op)", fp64_fma_test, 1},
+    };
+    for (size_t i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
+        for (int j = 0; j < 16; j++) data[j] = 1.0;
+        float rate = measureFunction(32000000, tests[i].fn, data);
+        printf("%s: %f GOPS/s\n", tests[i].name, tests[i].lanes * rate);
+    }
 }

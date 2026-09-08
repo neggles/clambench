@@ -8,6 +8,10 @@ ifeq ($(TARGET),aarch64)
 PROGRAMS := InstructionRate_aarch64
 SOURCES_InstructionRate_aarch64 := arm_instructionrate.c arm_instructionrate.s
 endif
+ifeq ($(TARGET),ppc64le)
+PROGRAMS := InstructionRate_ppc64le
+SOURCES_InstructionRate_ppc64le := ppc64le_instructionrate.c ../mt_instructionrate/ppc64_mt_instructionrate.s
+endif
 ifeq ($(TARGET),riscv64)
 PROGRAMS := InstructionRate_riscv64
 SOURCES_InstructionRate_riscv64 := riscv_instructionrate.c riscv_instructionrate.s

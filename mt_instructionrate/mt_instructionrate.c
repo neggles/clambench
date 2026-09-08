@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include "../Common/platform.h"
 #include <math.h>
 #include <string.h>
 
@@ -50,11 +51,12 @@ int *coreList = NULL;
 #endif
 
 
-#ifdef __PPC64__
+#if defined(__powerpc64__) || defined(__PPC64__)
 #include "ppc64_mt_instructionrate.c"
 #endif
 
 int main(int argc, char *argv[]) {
+    bench_require_power9();
    char parseBuffer[512];
    int parseIndices[64];
 
@@ -69,11 +71,11 @@ int main(int argc, char *argv[]) {
 	  argIdx++;
 	  
 	  // whatever just parse it here
-	  strncpy(parseBuffer, argv[argIdx], 511);
+	  snprintf(parseBuffer, sizeof(parseBuffer), "%s", argv[argIdx]);
           parseIndices[0] = 0;
           int indexIdx = 1;
           threadCount = 1;
-          for (int i = 0; i < 512 && indexIdx < 64; i++) {
+          for (int i = 0; i < 512 && parseBuffer[i] && indexIdx < 64; i++) {
             if (parseBuffer[i] == ',') {
               parseBuffer[i] = '\0';
               parseIndices[indexIdx] = i + 1;
@@ -95,6 +97,10 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   if (threadCount <= 0 || threadCount > 1024) {
+       fprintf(stderr, "Thread count must be in 1..1024\n");
+       return 1;
+   }
    RunTests();
 
    free(coreList);
@@ -126,7 +132,8 @@ float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, vo
     start_timing();
     for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
 #ifndef _MSC_VER
-      pthread_create(testThreads + threadIdx, NULL, TestThread, testData + threadIdx);
+      int rc = pthread_create(testThreads + threadIdx, NULL, TestThread, testData + threadIdx);
+      if (rc) { fprintf(stderr, "pthread_create: %s\n", strerror(rc)); exit(1); }
 #else
       testThreads[threadIdx] = CreateThread(NULL, 0, TestThread, testData + threadIdx, CREATE_SUSPENDED, NULL, NULL);
       SetThreadAffinityMask(testThreads[threadIdx], 1UL << testData[threadIdx].core);
@@ -179,7 +186,7 @@ float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, vo
   free(testData);
   free(testThreads);
 
-  return (1000 * totalIterations / timeMs) / 1e9;
+  return (double)totalIterations / ((double)timeMs * 1e6);
 }
 
 void *TestThread(void *param) {
@@ -189,8 +196,12 @@ void *TestThread(void *param) {
   if (testData->core >= 0) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
+    if (testData->core >= CPU_SETSIZE) { fprintf(stderr, "CPU index too large\n"); exit(1); }
     CPU_SET(testData->core, &cpuset);
-    sched_setaffinity(gettid(), sizeof(cpu_set_t), &cpuset);
+    if (sched_setaffinity(gettid(), sizeof(cpu_set_t), &cpuset)) {
+        perror("sched_setaffinity (use -cores for CPUs allowed by your cpuset)");
+        exit(1);
+    }
   }
   
   struct timeval start1;

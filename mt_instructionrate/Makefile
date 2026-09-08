@@ -8,6 +8,10 @@ ifeq ($(TARGET),aarch64)
 PROGRAMS := arm_mt_instructionrate
 SOURCES_arm_mt_instructionrate := mt_instructionrate.c arm_mt_instructionrate.s ../Common/timing.c
 endif
+ifeq ($(TARGET),ppc64le)
+PROGRAMS := ppc64_mt_instructionrate
+SOURCES_ppc64_mt_instructionrate := mt_instructionrate.c ppc64_mt_instructionrate.s ../Common/timing.c
+endif
 
 CLEAN_PROGRAMS := x86_mt_instructionrate arm_mt_instructionrate ppc64_mt_instructionrate
 include ../Common/c-benchmark.mk
