@@ -21,24 +21,25 @@ unsigned int end_timing_ts(struct timeb* startTimeb) {
 }
 #else
 #include <sys/time.h>
+#include "bench_time.h"
 #include <stddef.h>
 struct timeval startTv, endTv;
 void start_timing() {
-    gettimeofday(&startTv, NULL);
+    bench_gettimeofday(&startTv, NULL);
 }
 
 unsigned int end_timing() {
-    gettimeofday(&endTv, NULL);
+    bench_gettimeofday(&endTv, NULL);
     return (unsigned int)((endTv.tv_sec - startTv.tv_sec) * 1000 + (endTv.tv_usec - startTv.tv_usec) / 1000);
 }
 
 void start_timing_ts(struct timeval* start) {
-    gettimeofday(start, NULL);
+    bench_gettimeofday(start, NULL);
 }
 
 unsigned int end_timing_ts(struct timeval* start) {
     struct timeval end;
-    gettimeofday(&end, NULL);
+    bench_gettimeofday(&end, NULL);
     return (unsigned int)((end.tv_sec - start->tv_sec) * 1000 + (end.tv_usec - start->tv_usec) / 1000);
 
 }

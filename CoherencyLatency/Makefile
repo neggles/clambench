@@ -8,6 +8,10 @@ ifeq ($(TARGET),aarch64)
 PROGRAMS := CoherencyLatency_aarch64
 SOURCES_CoherencyLatency_aarch64 := PThreadsCoherencyLatency.c
 endif
+ifeq ($(TARGET),ppc64le)
+PROGRAMS := CoherencyLatency_ppc64le
+SOURCES_CoherencyLatency_ppc64le := PThreadsCoherencyLatency.c
+endif
 ifeq ($(TARGET),riscv64)
 PROGRAMS := CoherencyLatency_riscv64
 SOURCES_CoherencyLatency_riscv64 := PThreadsCoherencyLatency.c

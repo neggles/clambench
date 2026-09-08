@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <sys/sysinfo.h>
 #include <sys/time.h>
+#include "../Common/bench_time.h"
 #include <sys/types.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -186,17 +187,17 @@ float TimeThreads(unsigned int proc1,
     int t1rc, t2rc;
     void *res1, *res2;
 
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     t1rc = pthread_create(&testThreads[0], NULL, threadFunc, (void *)lat1);
     t2rc = pthread_create(&testThreads[1], NULL, threadFunc, (void *)lat2);
     if (t1rc != 0 || t2rc != 0) {
       fprintf(stderr, "Could not create threads\n");
-      return 0;
+      exit(1);
     }
 
     pthread_join(testThreads[0], &res1);
     pthread_join(testThreads[1], &res2);
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
 
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     float latency = 1e6 * (float)time_diff_ms / (float)iter;
@@ -234,8 +235,11 @@ void *LatencyTestThread(void *param) {
     uint64_t current = latencyData->start;
 
     CPU_ZERO(&cpuset);
+    if (latencyData->processorIndex >= CPU_SETSIZE) exit(1);
     CPU_SET(latencyData->processorIndex, &cpuset);
-    sched_setaffinity(gettid(), sizeof(cpu_set_t), &cpuset);
+    if (sched_setaffinity(gettid(), sizeof(cpu_set_t), &cpuset)) {
+        perror("sched_setaffinity"); exit(1);
+    }
     //fprintf(stderr, "thread %ld set affinity %d\n", gettid(), latencyData->processorIndex);
 
     while (current <= 2 * latencyData->iterations) {
@@ -251,12 +255,15 @@ void *NoLockLatencyTestThread(void *param) {
     uint64_t current = latencyData->start;
 
     CPU_ZERO(&cpuset);
+    if (latencyData->processorIndex >= CPU_SETSIZE) exit(1);
     CPU_SET(latencyData->processorIndex, &cpuset);
-    sched_setaffinity(gettid(), sizeof(cpu_set_t), &cpuset);
+    if (sched_setaffinity(gettid(), sizeof(cpu_set_t), &cpuset)) {
+        perror("sched_setaffinity"); exit(1);
+    }
 
     while (current <= 2 * latencyData->iterations) {
-        if (*(latencyData->target) == current - 1) {
-            *(latencyData->target) = current;
+        if (__atomic_load_n(latencyData->target, __ATOMIC_RELAXED) == current - 1) {
+            __atomic_store_n(latencyData->target, current, __ATOMIC_RELAXED);
             current += 2;
         } 
     }
