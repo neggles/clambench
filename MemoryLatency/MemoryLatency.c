@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <math.h>
 #include <sys/time.h>
+#include "../Common/bench_time.h"
 #include <unistd.h>
 
 #ifndef __MINGW32__
@@ -21,9 +22,8 @@
 #include <errno.h>
 #include <sched.h>
 
-// TODO: possibly get this programatically
-#define PAGE_SIZE 4096
-#define CACHELINE_SIZE 64
+#include "../Common/platform.h"
+#define PAGE_SIZE BENCH_PAGE_SIZE
 
 int default_test_sizes[] = { 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 600, 768, 1024, 1536, 2048, 2304, 2560,
                                3072, 4096, 5120, 6144, 8192, 10240, 12288, 13312, 14336, 15360, 16384, 18432, 20480, 24567, 32768, 65536, 98304,
@@ -56,7 +56,7 @@ extern void stlftest(uint32_t iterations, char *arr) __attribute((fastcall));
 extern void matchedstlftest(uint32_t iterations, char *arr) __attribute((fastcall));
 void (*stlfFunc)(uint32_t, char *) __attribute__((fastcall)) = stlftest;
 #define BITS_32
-#elif __aarch64__
+#elif defined(__aarch64__) || defined(__powerpc64__)
 extern void preplatencyarr(uint64_t *arr, uint64_t len);
 extern uint32_t latencytest(uint64_t iterations, uint64_t *arr);
 
@@ -98,6 +98,7 @@ uint32_t pageByPage = 0;
 uint32_t longpattern = 0;
 
 int main(int argc, char* argv[]) {
+    bench_require_power9();
     uint32_t maxTestSizeMb = 0;
     uint32_t singleSize = 0;
     uint32_t testSizeCount = sizeof(default_test_sizes) / sizeof(int);
@@ -118,7 +119,7 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "Using simple C test\n");
                 } else if (strncmp(testType, "tlb", 3) == 0) {
                     testFunc = RunTlbTest;
-                    fprintf(stderr, "Testing TLB with one element accessed per 4K page\n");
+                    fprintf(stderr, "Testing TLB with one element accessed per native OS page\n");
                 } else if (strncmp(testType, "mlp", 3) == 0) {
                     mlpTest = 32;
                     fprintf(stderr, "Running memory parallelism test\n");
@@ -267,7 +268,7 @@ int main(int argc, char* argv[]) {
 
         for (int parallelism = 0; parallelism < mlpTest; parallelism++) {
             printf("%d", parallelism + 1);
-            for (int size_idx = 0; size_idx < default_test_sizes[size_idx]; size_idx++) {
+            for (int size_idx = 0; size_idx < testSizeCount; size_idx++) {
                 printf(",%f", results[size_idx * mlpTest + parallelism]);
             }
             printf("\n");
@@ -303,7 +304,9 @@ int main(int argc, char* argv[]) {
 
             fprintf(stderr, "Node %d has %d cores\n", cpuNode, nodeCpuCount);
         cpu_set_t cpuset;
-        memcpy(cpuset.__bits, nodeBitmask->maskp, nodeBitmask->size / 8);
+        CPU_ZERO(&cpuset);
+        for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
+            if (numa_bitmask_isbitset(nodeBitmask, cpu)) CPU_SET(cpu, &cpuset);
             // for (int i = 0; i < get_nprocs(); i++) 
             //  if (numa_bitmask_isbitset(nodeBitmask, i)) CPU_SET(i, &cpuset); 
 
@@ -382,72 +385,54 @@ uint64_t scale_iterations(uint32_t size_kb, uint32_t iterations) {
 // random page. Tries to avoid TLB penalties at the cost of not being completely random
 // list_size = size of pattern arr in 32-bit elements
 void FillPageByPage(uint32_t *pattern_arr, uint32_t list_size, uint32_t byte_increment) {
-    uint32_t pageCount = list_size * sizeof(uint32_t) / PAGE_SIZE;
-    uint32_t page_element_count = PAGE_SIZE / sizeof(uint32_t);
-    if (pageCount <= 2) {
-        FillPatternArr(pattern_arr, list_size, byte_increment);
-        return;
-    }
-
-    // If test size is not divisible by page size, handle the extra page separately
-    short extraPage = 0;
-    if (pageCount * PAGE_SIZE / sizeof(uint32_t) < list_size) extraPage = 1;
-
-    uint32_t *pagePatternArr = malloc(sizeof(uint32_t) * (pageCount + extraPage));
-    FillPatternArr(pagePatternArr, pageCount + extraPage, 4);
-    for (uint32_t page_idx = 0; page_idx < pageCount; page_idx++)
-    {
-        uint32_t *page_base = pattern_arr + (page_element_count * page_idx);
-        FillPatternArr(page_base, page_element_count, byte_increment);
-
-        uint32_t page_last_element_index;
-        for (uint32_t page_element_idx = 0; page_element_idx < (PAGE_SIZE / sizeof(uint32_t)); page_element_idx += (byte_increment / sizeof(uint32_t))) {
-            // element that points to 0 should be directed to the next page
-            if (page_base[page_element_idx] == 0) page_base[page_element_idx] = pagePatternArr[page_idx] * (PAGE_SIZE / sizeof(uint32_t));
-
-            // otherwise make sure the offset is set relative to the start of the uber-array
-            else page_base[page_element_idx] += page_element_count * page_idx;
+    uint32_t per_page = PAGE_SIZE / sizeof(*pattern_arr);
+    uint32_t pages = (list_size + per_page - 1) / per_page;
+    uint32_t stride = byte_increment / sizeof(*pattern_arr);
+    uint32_t *next_page = malloc(pages * sizeof(*next_page));
+    if (!next_page) { perror("page pattern"); exit(1); }
+    FillPatternArr(next_page, pages, sizeof(*next_page));
+    for (uint32_t page = 0; page < pages; page++) {
+        uint32_t base = page * per_page;
+        uint32_t count = list_size - base;
+        if (count > per_page) count = per_page;
+        FillPatternArr(pattern_arr + base, count, byte_increment);
+        /* Preserve each intra-line lane's cycle, including the partial last page. */
+        for (uint32_t lane = 0; lane < 1; lane++) {
+            for (uint32_t i = lane; i < count; i += stride) {
+                if (pattern_arr[base + i] == lane)
+                    pattern_arr[base + i] = next_page[page] * per_page + lane;
+                else pattern_arr[base + i] += base;
+            }
         }
     }
-
-    free(pagePatternArr);
-    return;
+    free(next_page);
 }
 
 // Fills an array so that traversal completes within one page before going to another
 // random page. Tries to avoid TLB penalties at the cost of not being completely random
 // list_size = size of pattern arr in 32-bit elements
 void FillPageByPage64(uint64_t *pattern_arr, uint32_t list_size, uint32_t byte_increment) {
-    uint32_t pageCount = list_size * sizeof(uint64_t) / PAGE_SIZE;
-    uint32_t page_element_count = PAGE_SIZE / sizeof(uint64_t);
-    if (pageCount <= 2) {
-        FillPatternArr64(pattern_arr, list_size, byte_increment);
-        return;
-    }
-
-    // If test size is not divisible by page size, handle the extra page separately
-    short extraPage = 0;
-    if (pageCount * PAGE_SIZE / sizeof(uint64_t) < list_size) extraPage = 1;
-
-    uint32_t *pagePatternArr = malloc(sizeof(uint32_t) * (pageCount + extraPage));
-    FillPatternArr(pagePatternArr, pageCount + extraPage, 4);
-    for (uint32_t page_idx = 0; page_idx < pageCount; page_idx++)
-    {
-        uint64_t *page_base = pattern_arr + (page_element_count * page_idx);
-        FillPatternArr((uint32_t *)page_base, page_element_count, byte_increment);
-
-        uint32_t page_last_element_index;
-        for (uint32_t page_element_idx = 0; page_element_idx < (PAGE_SIZE / sizeof(uint64_t)); page_element_idx += (byte_increment / sizeof(uint64_t))) {
-            // element that points to 0 should be directed to the next page
-            if (page_base[page_element_idx] == 0) page_base[page_element_idx] = pagePatternArr[page_idx] * (PAGE_SIZE / sizeof(uint64_t));
-
-            // otherwise make sure the offset is set relative to the start of the uber-array
-            else page_base[page_element_idx] += page_element_count * page_idx;
+    uint32_t per_page = PAGE_SIZE / sizeof(*pattern_arr);
+    uint32_t pages = (list_size + per_page - 1) / per_page;
+    uint32_t stride = byte_increment / sizeof(*pattern_arr);
+    uint32_t *next_page = malloc(pages * sizeof(*next_page));
+    if (!next_page) { perror("page pattern"); exit(1); }
+    FillPatternArr(next_page, pages, sizeof(*next_page));
+    for (uint32_t page = 0; page < pages; page++) {
+        uint32_t base = page * per_page;
+        uint32_t count = list_size - base;
+        if (count > per_page) count = per_page;
+        FillPatternArr64(pattern_arr + base, count, byte_increment);
+        /* Preserve each intra-line lane's cycle, including the partial last page. */
+        for (uint32_t lane = 0; lane < stride; lane++) {
+            for (uint32_t i = lane; i < count; i += stride) {
+                if (pattern_arr[base + i] == lane)
+                    pattern_arr[base + i] = next_page[page] * per_page + lane;
+                else pattern_arr[base + i] += base;
+            }
         }
     }
-
-    free(pagePatternArr);
-    return;
+    free(next_page);
 }
 
 // Fills an array using Sattolo's algo
@@ -503,7 +488,7 @@ float RunTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) 
     // Fill list to create random access pattern
     uint32_t *A;
     if (preallocatedArr == NULL) {
-        if (0 != posix_memalign((void **)(&A), 64, sizeof(uint32_t) * list_size)) {
+        if (0 != posix_memalign((void **)(&A), pageByPage ? PAGE_SIZE : CACHELINE_SIZE, sizeof(uint32_t) * list_size)) {
             fprintf(stderr, "Failed to allocate memory for %u KB test\n", size_kb);
         }
     } else {
@@ -516,13 +501,13 @@ float RunTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) 
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
 
     // Run test
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     current = A[0];
     for (int i = 0; i < scaled_iterations; i++) {
         current = A[current];
         sum += current;
     }
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
     if (preallocatedArr == NULL) free(A);
@@ -535,7 +520,7 @@ float RunTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) 
 float RunAopTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) {
     struct timeval startTv, endTv;
     struct timezone startTz, endTz;
-    uint32_t element_count = size_kb * 1024 / 64;  // 64B cachelines
+    uint32_t element_count = size_kb * 1024 / CACHELINE_SIZE;  // one element per cache line
     uint32_t sum = 0, current;
 
     // allocate pattern array
@@ -555,7 +540,7 @@ float RunAopTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
 
     uint32_t *A;
     if (preallocatedArr == NULL) {
-        if (0 != posix_memalign((void **)(&A), 64, 1024 * size_kb)) {
+        if (0 != posix_memalign((void **)(&A), CACHELINE_SIZE, 1024 * size_kb)) {
             fprintf(stderr, "Failed to allocate memory for %u KB test\n", size_kb);
         }
     } else {
@@ -564,18 +549,18 @@ float RunAopTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
 
     // make pattern array actually pointers
     for (int i = 0; i < element_count; i++) {
-        pointer_arr[i] = A + (pattern_arr[i] * (64 / sizeof(uint32_t)));
+        pointer_arr[i] = A + (pattern_arr[i] * (CACHELINE_SIZE / sizeof(uint32_t)));
         *pointer_arr[i] = i + 1;
     }
     free(pattern_arr); 
 
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     for (int i = 0; i < scaled_iterations;) {
         for (int pointer_idx = 0; (pointer_idx < element_count) && (i < scaled_iterations); pointer_idx++, i++)
             sum += *pointer_arr[pointer_idx]; 
     }
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
     if (sum == 0) fprintf(stderr, "something is not right\n");
@@ -594,9 +579,14 @@ float RunMlpTest(uint32_t size_kb, uint32_t iterations, uint32_t parallelism) {
     uint32_t sum = 0, current;
 
     if (parallelism < 1) return 0;
+    if ((uint64_t)parallelism * CACHELINE_SIZE > (uint64_t)size_kb * 1024) {
+        fprintf(stderr, "MLP %u exceeds cache lines in %u KB; skipping\n", parallelism, size_kb);
+        return NAN;
+    }
 
     // Fill list to create random access pattern, and hold temporary data
-    uint32_t *A = (uint32_t *)malloc(sizeof(uint32_t) * list_size);
+    uint32_t *A;
+    if (posix_memalign((void **)&A, PAGE_SIZE, sizeof(uint32_t) * list_size)) A = NULL;
     uint32_t *offsets = (uint32_t *)malloc(sizeof(uint32_t) * parallelism);
     if (!A || !offsets) {
         fprintf(stderr, "Failed to allocate memory for %u KB test\n", size_kb);
@@ -608,14 +598,14 @@ float RunMlpTest(uint32_t size_kb, uint32_t iterations, uint32_t parallelism) {
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations) / parallelism;
 
     // Run test
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     for (uint32_t i = 0; i < scaled_iterations; i++) {
         for (uint32_t j = 0; j < parallelism; j++)
         {
             offsets[j] = A[offsets[j]];
         }
     }
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     double mbTransferred = (scaled_iterations * parallelism * sizeof(uint32_t))  / (double)1e6;
     float bw = 1000 * mbTransferred / (double)time_diff_ms;
@@ -647,7 +637,7 @@ float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     // Fill list to create random access pattern
     POINTER_INT *A;
     if (preallocatedArr == NULL) {
-        if (0 != posix_memalign((void **)(&A), 64, POINTER_SIZE * list_size)) {
+        if (0 != posix_memalign((void **)(&A), pageByPage ? PAGE_SIZE : CACHELINE_SIZE, POINTER_SIZE * list_size)) {
             fprintf(stderr, "Failed to allocate memory for %u KB test\n", size_kb);
         }
     } else {
@@ -669,14 +659,16 @@ float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
 
     // Run test
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     #ifdef LONGPATTERN
     if (longpattern)
         sum = longpatternlatencytest(scaled_iterations, A);
     else
         sum = latencytest(scaled_iterations, A);
+    #else
+    sum = latencytest(scaled_iterations, A);
     #endif
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
     if (preallocatedArr == NULL) free(A);
@@ -688,11 +680,11 @@ float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
 
 // Tries to isolate virtual to physical address translation latency by accessing
 // one element per page, and checking latency difference between that and hitting the same amount of "hot"
-// cachelines using a normal latency test.. 4 KB pages are assumed.
+// cachelines using a normal latency test. Use the running kernel page size.
 float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) {
     struct timeval startTv, endTv;
     struct timezone startTz, endTz;
-    uint32_t element_count = size_kb / 4;
+    uint32_t element_count = (uint64_t)size_kb * 1024 / PAGE_SIZE;
     uint32_t list_size = size_kb * 1024 / 4;
     uint32_t sum = 0, current;
 
@@ -724,7 +716,7 @@ float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     // [offset-------page-------][offset-----page------....etc
     uint32_t *A;
     if (preallocatedArr == NULL) {
-        A = (uint32_t *)malloc(sizeof(uint32_t) * list_size);
+        if (posix_memalign((void **)&A, PAGE_SIZE, sizeof(uint32_t) * list_size)) A = NULL;
         if (!A) {
             fprintf(stderr, "Failed to allocate memory for %u KB test (pointer array)\n", size_kb);
         }
@@ -732,14 +724,14 @@ float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
         A = preallocatedArr;
     }
 
-    memset(A, INT_MAX, list_size); // catch any bad accesses immediately
+    memset(A, 0xff, sizeof(*A) * list_size); // catch any bad accesses immediately
     int pageIncrement = PAGE_SIZE / sizeof(uint32_t);
     for (int i = 0;i < element_count; i++) {
         // offset each by i cachelines to avoid conflict misses. If we just use the first cacheline
         // in each page, the index bits for every VIPT access will be the same and we'll run into L1D misses
         // faster than we would like
-        int idx = i * pageIncrement + ((i * 16) & (pageIncrement - 1));
-        int target_idx = pattern_arr[i] * pageIncrement + ((pattern_arr[i] * 16) & (pageIncrement - 1));
+        int idx = i * pageIncrement + ((i * (CACHELINE_SIZE / 4)) & (pageIncrement - 1));
+        int target_idx = pattern_arr[i] * pageIncrement + ((pattern_arr[i] * (CACHELINE_SIZE / 4)) & (pageIncrement - 1));
         A[idx] = target_idx;
     }
 
@@ -748,14 +740,14 @@ float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
 
     // Run test
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     current = A[0];
     for (int i = 0; i < scaled_iterations; i++) {
         current = A[current];
         sum += current;
         //if (size_kb == 48) fprintf(stderr, "idx: %u\n", current);
     }
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
     if (preallocatedArr == NULL) free(A);
@@ -781,23 +773,23 @@ void RunStlfTest(uint32_t iterations, int mode, int pageEnd, int loadDistance) {
     struct timezone startTz, endTz;
     uint64_t time_diff_ms;
     float latency;
-    float stlfResults[64][64];
+    float stlfResults[CACHELINE_SIZE][CACHELINE_SIZE];
     char *arr; 
     char *allocArr;
 
     // defaults: grab a couple of cachelines
-    int testAlignment = 64, testAllocSize = 128, testOffset = 0;
+    int testAlignment = CACHELINE_SIZE, testAllocSize = 2 * CACHELINE_SIZE, testOffset = 0;
 
     if (pageEnd != 0) {
         testAlignment = pageEnd;
         testAllocSize = pageEnd * 2;
-        testOffset = pageEnd - 64;
+        testOffset = pageEnd - CACHELINE_SIZE;
     } else if (loadDistance != 0) {
-        testAlignment = 4096;
-        testAllocSize = loadDistance + 128; // enough if I ever go to avx-512 loads
+        testAlignment = PAGE_SIZE;
+        testAllocSize = loadDistance + 2 * CACHELINE_SIZE; // enough if I ever go to avx-512 loads
     }
 
-    // obtain a couple of cachelines, assuming 64B cacheline size
+    // obtain a couple of architecture-sized cache lines
 #ifdef _WIN32
     allocArr = (char *)_aligned_malloc(testAllocSize, testAlignment);
     if (allocArr == NULL) {
@@ -813,13 +805,13 @@ void RunStlfTest(uint32_t iterations, int mode, int pageEnd, int loadDistance) {
 
     arr = allocArr + testOffset;
 
-    for (int storeOffset = 0; storeOffset < 64; storeOffset++)
-        for (int loadOffset = 0; loadOffset < 64; loadOffset++) {
+    for (int storeOffset = 0; storeOffset < CACHELINE_SIZE; storeOffset++)
+        for (int loadOffset = 0; loadOffset < CACHELINE_SIZE; loadOffset++) {
             ((uint32_t *)(arr))[0] = storeOffset;
             ((uint32_t *)(arr))[1] = loadOffset + loadDistance;
-            gettimeofday(&startTv, &startTz);
+            bench_gettimeofday(&startTv, &startTz);
             stlfFunc(iterations, arr);
-            gettimeofday(&endTv, &endTz);
+            bench_gettimeofday(&endTv, &endTz);
             time_diff_ms = 1e6 * (endTv.tv_sec - startTv.tv_sec) + (endTv.tv_usec - startTv.tv_usec);
             latency = 1e3 * (float) time_diff_ms / (float) iterations;
             stlfResults[storeOffset][loadOffset] = latency;
@@ -827,11 +819,11 @@ void RunStlfTest(uint32_t iterations, int mode, int pageEnd, int loadDistance) {
         }
 
     // output as CSV
-    for (int loadOffset = 0; loadOffset < 64; loadOffset++) printf(",%d", loadOffset);
+    for (int loadOffset = 0; loadOffset < CACHELINE_SIZE; loadOffset++) printf(",%d", loadOffset);
     printf("\n");
-    for (int storeOffset = 0; storeOffset < 64; storeOffset++) {
+    for (int storeOffset = 0; storeOffset < CACHELINE_SIZE; storeOffset++) {
         printf("%d", storeOffset);
-        for (int loadOffset = 0; loadOffset < 64; loadOffset++) {
+        for (int loadOffset = 0; loadOffset < CACHELINE_SIZE; loadOffset++) {
             printf(",%f", stlfResults[storeOffset][loadOffset]);
         }
         printf("\n");

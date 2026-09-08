@@ -8,6 +8,10 @@ ifeq ($(TARGET),aarch64)
 PROGRAMS := MemoryLatency_aarch64
 SOURCES_MemoryLatency_aarch64 := MemoryLatency.c MemoryLatency_arm.s
 endif
+ifeq ($(TARGET),ppc64le)
+PROGRAMS := MemoryLatency_ppc64le
+SOURCES_MemoryLatency_ppc64le := MemoryLatency.c MemoryLatency_ppc64le.s
+endif
 ifeq ($(TARGET),riscv64)
 PROGRAMS := MemoryLatency_riscv64
 SOURCES_MemoryLatency_riscv64 := MemoryLatency.c MemoryLatency_riscv.s
