@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <sys/time.h>
+#include "../Common/bench_time.h"
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>
@@ -39,7 +40,7 @@
 #define HUGEPAGE_HACK 1
 #undef HUGEPAGE_HACK
 
-#pragma GCC diagnostic ignored "-Wattributes"
+#include "../Common/platform.h"
 
 int default_test_sizes[] = { 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 400, 448, 512, 600, 768, 1024, 1536, 2048, 2560,
                                3072, 4096, 5120, 6144, 8192, 10240, 12288, 14336, 15360, 16384, 18432, 20480, 24567, 32768, 40960, 51200, 61440, 65536, 98304,
@@ -60,7 +61,7 @@ float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shar
 
 #ifdef __x86_64
 #include <cpuid.h>
-float scalar_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) __attribute((ms_abi));
+float scalar_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) BENCH_ABI;
 extern float sse_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) __attribute__((ms_abi));
 extern float sse_write(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) __attribute__((ms_abi));
 extern float sse_ntwrite(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) __attribute__((ms_abi));
@@ -97,12 +98,12 @@ extern void flush_icache(void *arr, uint64_t length);
 #endif
 
 #ifdef __x86_64
-__attribute((ms_abi)) float instr_read(float *arr, uint64_t arr_length, uint64_t iterations, uint64_t start) {
+BENCH_ABI float instr_read(float *arr, uint64_t arr_length, uint64_t iterations, uint64_t start) {
 #else
 float instr_read(float *arr, uint64_t arr_length, uint64_t iterations, uint64_t start) { 
 #endif
-    void (*nopfunc)(uint64_t) __attribute((ms_abi)) = (__attribute((ms_abi)) void(*)(uint64_t))arr;
-    for (int iterIdx = 0; iterIdx < iterations; iterIdx++) nopfunc(iterations);
+    void (*nopfunc)(uint64_t) BENCH_ABI = (BENCH_ABI void(*)(uint64_t))arr;
+    for (uint64_t iterIdx = 0; iterIdx < iterations; iterIdx++) nopfunc(iterations);
     return 1.1f;
 }
 
@@ -128,6 +129,7 @@ int numa = 0;
 int pmon = 0;
 
 int main(int argc, char *argv[]) {
+    bench_require_power9();
     int threads = 1;
     int cpuid_data[4];
     int shared = 1;
@@ -143,14 +145,9 @@ int main(int argc, char *argv[]) {
     if (sseSupported) fprintf(stderr, "SSE supported\n");
     avxSupported = __builtin_cpu_supports("avx");
     if (avxSupported) fprintf(stderr, "AVX supported\n");
-    // gcc has no __builtin_cpu_supports for avx512, so check by hand.
-    // eax = 7 -> extended features, bit 16 of ebx = avx512f
-    uint32_t cpuidEax, cpuidEbx, cpuidEcx, cpuidEdx;
-    __cpuid_count(7, 0, cpuidEax, cpuidEbx, cpuidEcx, cpuidEdx);
-    if (cpuidEbx & (1UL << 16)) {
-        fprintf(stderr, "AVX512 supported\n");
-        avx512Supported = 1;
-    }
+    /* Includes OS XSAVE/XCR0 support, unlike the old CPUID-only check. */
+    avx512Supported = __builtin_cpu_supports("avx512f");
+    if (avx512Supported) fprintf(stderr, "AVX512 supported\n");
 #endif
 
     bw_func = asm_read;
@@ -199,6 +196,10 @@ int main(int argc, char *argv[]) {
             }
 #ifndef __MINGW32__
             else if (strncmp(arg, "pmon", 4) == 0) {
+#ifdef __powerpc64__
+                fprintf(stderr, "-pmon uses x86 raw PMU events; use perf stat on POWER\n");
+                return 1;
+#endif
                 pmon = 1;
                 fprintf(stderr, "Using hardware performance monitoring\n");
             }
@@ -226,15 +227,25 @@ int main(int argc, char *argv[]) {
             else if (strncmp(arg, "method", 6) == 0) {
                 methodSet = 1;
                 argIdx++;
+#ifdef __powerpc64__
+                if (argIdx == argc ||
+                    (strcmp(argv[argIdx], "scalar") && strcmp(argv[argIdx], "asm") &&
+                     strcmp(argv[argIdx], "write") && strcmp(argv[argIdx], "copy") &&
+                     strcmp(argv[argIdx], "add") && strcmp(argv[argIdx], "cflip") &&
+                     strcmp(argv[argIdx], "instr4"))) {
+                    fprintf(stderr, "POWER methods: scalar asm write copy add cflip instr4\n");
+                    return 1;
+                }
+#endif
                 if (strncmp(argv[argIdx], "scalar", 6) == 0) {
                     bw_func = scalar_read;
                     fprintf(stderr, "Using scalar C code\n");
                 } else if (strncmp(argv[argIdx], "asm", 3) == 0) {
                     bw_func = asm_read;
-                    fprintf(stderr, "Using ASM code (AVX or NEON)\n");
+                    fprintf(stderr, "Using ASM code (AVX, NEON or VSX)\n");
                 } else if (strncmp(argv[argIdx], "write", 5) == 0) {
                     bw_func = asm_write;
-                    fprintf(stderr, "Using ASM code (AVX or NEON), testing write bw instead of read\n");
+                    fprintf(stderr, "Using ASM code (AVX, NEON or VSX), testing write bw instead of read\n");
                     #ifdef __x86_64
                     if (avx512Supported) {
                         fprintf(stderr, "Using AVX-512 because that's supported\n");
@@ -243,7 +254,7 @@ int main(int argc, char *argv[]) {
                     #endif
                 } else if (strncmp(argv[argIdx], "copy", 4) == 0) {
                     bw_func = asm_copy;
-                    fprintf(stderr, "Using ASM code (AVX or NEON), testing copy bw instead of read\n");
+                    fprintf(stderr, "Using ASM code (AVX, NEON or VSX), testing copy bw instead of read\n");
                     #ifdef __x86_64
                     if (avx512Supported) {
                         fprintf(stderr, "Using AVX-512 because that's supported\n");
@@ -252,10 +263,10 @@ int main(int argc, char *argv[]) {
                     #endif
                 } else if (strncmp(argv[argIdx], "cflip", 5) == 0) {
                     bw_func = asm_cflip;
-                    fprintf(stderr, "Using ASM code (AVX or NEON), flipping order of elements within cacheline\n");
+                    fprintf(stderr, "Using ASM code (AVX, NEON or VSX), flipping order of elements within cacheline\n");
                 } else if (strncmp(argv[argIdx], "add", 3) == 0) {
                     bw_func = asm_add;
-                    fprintf(stderr, "Using ASM code (AVX or NEON), adding constant to array\n");
+                    fprintf(stderr, "Using ASM code (AVX, NEON or VSX), adding constant to array\n");
                     #ifdef __x86_64
                     if (avx512Supported) {
                         fprintf(stderr, "Using AVX-512 because that's supported\n");
@@ -462,11 +473,11 @@ int main(int argc, char *argv[]) {
         else
         {
             printf("%d,%f", singleSize, MeasureBw(singleSize, GetIterationCount(singleSize, threads), threads, shared, nopBytes, 0, 0));
-            append_perf_values();
+            if (pmon) append_perf_values();
             printf("\n");
         }
 
-        close_perf_monitoring();
+        if (pmon) close_perf_monitoring();
     }
 
     return 0;
@@ -479,7 +490,7 @@ int main(int argc, char *argv[]) {
 /// <returns>Iterations per thread</returns>
 uint64_t GetIterationCount(uint64_t testSize, uint64_t threads)
 {
-    int scaledGbToTransfer = gbToTransfer;
+    uint64_t scaledGbToTransfer = gbToTransfer;
     if (testSize > 64) scaledGbToTransfer = gbToTransfer / 8;
     uint64_t iterations = scaledGbToTransfer * 1024 * 1024 / testSize;
     if (iterations % 2 != 0) iterations += 1;  // must be even
@@ -498,6 +509,19 @@ void WriteReturn8BBlock(char *dst) {
 }
 
 void FillInstructionArray(uint64_t *nops, uint64_t sizeKb, int nopSize, int branchInterval) {
+#ifdef __powerpc64__
+    /* Fixed-width POWER NOPs and relative branches; ELFv2 direct code pointer.
+       No function descriptor, TOC use, or nonvolatile register modifications. */
+    uint32_t *code = (uint32_t *)nops;
+    size_t words = sizeKb * 1024 / sizeof(*code);
+    for (size_t i = 0; i < words; i++)
+        code[i] = branchInterval > 1 && i % (2 * (size_t)branchInterval) == 1
+                  ? 0x48000004u : 0x60000000u; /* b .+4 / ori 0,0,0 */
+    code[words - 1] = 0x4e800020u; /* blr */
+    /* GCC/Clang provide required D-cache writeback, I-cache invalidation,
+       sync/isync for modified instruction storage on POWER. */
+    __builtin___clear_cache((char *)code, (char *)(code + words));
+#else
 #ifdef __x86_64
     char nop2b[8] = { 0x66, 0x90, 0x66, 0x90, 0x66, 0x90, 0x66, 0x90 };
     char nop2b_xor[8] = { 0x31, 0xc0, 0x31, 0xc0, 0x31, 0xc0, 0x31, 0xc0 };
@@ -621,13 +645,15 @@ void FillInstructionArray(uint64_t *nops, uint64_t sizeKb, int nopSize, int bran
         #endif 
     }
 
+#endif /* POWER instruction emitter */
 #ifndef HUGEPAGE_HACK
     size_t funcLen = sizeKb * 1024;
-    uint64_t nopfuncPage = (~0xFFF) & (uint64_t)(nops);
-    size_t mprotectLen = (0xFFF & (uint64_t)(nops)) + funcLen;
+    uint64_t nopfuncPage = (~(BENCH_PAGE_SIZE - 1)) & (uintptr_t)nops;
+    size_t mprotectLen = ((BENCH_PAGE_SIZE - 1) & (uintptr_t)nops) + funcLen;
     
     if (mprotect((void *)nopfuncPage, mprotectLen, PROT_EXEC | PROT_READ | PROT_WRITE) < 0) {
         fprintf(stderr, "mprotect failed, errno %d\n", errno);
+        exit(1);
     }
 #endif
 }
@@ -694,7 +720,8 @@ float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shar
     // - maskp = pointer to bitmap
     // cpu_set_t has field __bits. have to assume it's CPU_SETSIZE bits
     // also assume bitmap size is divisible by 8 (byte size)
-    memcpy(cpuset.__bits, nodeBitmask->maskp, nodeBitmask->size / 8);
+    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
+        if (numa_bitmask_isbitset(nodeBitmask, cpu)) CPU_SET(cpu, &cpuset);
     }
 #endif
 
@@ -788,10 +815,10 @@ float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shar
 #ifndef __MINGW32__
     if (pmon) start_perf_monitoring();
 #endif
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     for (uint64_t i = 0; i < threads; i++) pthread_create(testThreads + i, NULL, ReadBandwidthTestThread, (void *)(threadData + i));
     for (uint64_t i = 0; i < threads; i++) pthread_join(testThreads[i], NULL);
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
 #ifndef __MINGW32__
     if (pmon) stop_perf_monitoring();
 #endif
@@ -833,7 +860,7 @@ void *allocate_memory(size_t bytes, unsigned int threadOffset)
     void *dst = NULL;
     #ifndef HUGEPAGE_HACK
     int posix_memalign_rc = 0;
-    if (posix_memalign_rc != posix_memalign((void **)(&dst), 64, bytes)) {
+    if (posix_memalign_rc != posix_memalign((void **)(&dst), CACHELINE_SIZE, bytes)) {
         fprintf(stderr, "Could not allocate memory: %d\n", posix_memalign_rc);
         return NULL;
     }
@@ -863,7 +890,7 @@ void *allocate_memory(size_t bytes, unsigned int threadOffset)
 }
 
 #ifdef __x86_64
-__attribute((ms_abi)) float scalar_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) {
+BENCH_ABI float scalar_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) {
 #else
 float scalar_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t start) {
 #endif

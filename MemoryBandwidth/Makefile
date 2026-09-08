@@ -8,6 +8,10 @@ ifeq ($(TARGET),aarch64)
 PROGRAMS := MemoryBandwidth_aarch64
 SOURCES_MemoryBandwidth_aarch64 := MemoryBandwidth.c MemoryBandwidth_arm.s
 endif
+ifeq ($(TARGET),ppc64le)
+PROGRAMS := MemoryBandwidth_ppc64le
+SOURCES_MemoryBandwidth_ppc64le := MemoryBandwidth.c MemoryBandwidth_ppc64le.s
+endif
 ifeq ($(TARGET),riscv64)
 PROGRAMS := MemoryBandwidth_riscv64
 SOURCES_MemoryBandwidth_riscv64 := MemoryBandwidth.c MemoryBandwidth_riscv.s

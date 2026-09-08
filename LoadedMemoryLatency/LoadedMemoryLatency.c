@@ -7,12 +7,13 @@
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/time.h>
+#include "../Common/bench_time.h"
 #include <sched.h>
 #include <pthread.h>
 #include <math.h>
 #include <errno.h>
 
-#define CACHELINE_SIZE 64
+#include "../Common/platform.h"
 
 enum TestMethod {
     Read,
@@ -41,8 +42,8 @@ int default_test_sizes[] = { 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256,
                                3072, 4096, 5120, 6144, 8192, 10240, 12288, 13312, 14336, 15360, 16384, 18432, 20480, 24567, 32768, 65536, 98304,
                                131072, 262144, 393216, 524288, 1048576 };
 
-extern uint64_t asm_read(char *arr, uint64_t arr_length, volatile int *flag, int waitfactor) __attribute__((ms_abi)); 
-extern uint64_t asm_add(char *arr, uint64_t arr_length, volatile int *flag, int waitfactor) __attribute__((ms_abi)); 
+extern uint64_t asm_read(char *arr, uint64_t arr_length, volatile int *flag, int waitfactor) BENCH_ABI;
+extern uint64_t asm_add(char *arr, uint64_t arr_length, volatile int *flag, int waitfactor) BENCH_ABI;
 void *ReadBandwidthTestThread(void *param);
 void *FillBandwidthTestArr(void *param);
 void FillPatternArr(uint32_t *pattern_arr, uint32_t list_size, uint32_t byte_increment);
@@ -57,6 +58,7 @@ uint64_t throttle = 0;
 enum TestMethod testMethod = Read;
 
 int main(int argc, char *argv[]) {
+    bench_require_power9();
     int bwThreadCap = get_nprocs() - 1;
     int coreCount = get_nprocs();
     int latencyCore = 0;
@@ -137,6 +139,12 @@ int main(int argc, char *argv[]) {
         }
     }
         
+    if (sharedLatency && testMethod == Add) {
+        fprintf(stderr, "Shared latency array cannot be modified by the add workers\n");
+        return 1;
+    }
+    if (bwThreadCap < 0 || bwThreadCap >= CPU_SETSIZE ||
+        latencyCore < 0 || latencyCore >= CPU_SETSIZE) return 1;
     cpu_set_t latency_cpuset;
     CPU_ZERO(&latency_cpuset);
     CPU_SET(latencyCore, &latency_cpuset);
@@ -151,11 +159,15 @@ int main(int argc, char *argv[]) {
         memset(bandwidths, 0, sizeof(float) * testSizeCount);
         // set the entire affinity mask right away
         for (int bwThreadCount = 0; bwThreadCount <= bwThreadCap; bwThreadCount++) {
-            int nextCore;
+            int nextCore = 0;
              if (bwThreadCount > 0) {
                 if (customCores == NULL) nextCore = coreCount - bwThreadCount - 1;
                 else nextCore = customCores[bwThreadCount - 1] ;
                 fprintf(stderr, "next core is %d\n", nextCore);
+                if (nextCore < 0 || nextCore >= CPU_SETSIZE) {
+                    fprintf(stderr, "Invalid bandwidth CPU %d\n", nextCore);
+                    return 1;
+                }
                 CPU_SET(nextCore, &bw_cpuset);
             } 
         }
@@ -179,15 +191,19 @@ int main(int argc, char *argv[]) {
     }
     else if (!sharedLatency) {
         fprintf(stderr, "%d cores, will use up to %d for BW threads\n", coreCount, bwThreadCap);
-        float *latencies = (float *)malloc(sizeof(float) * bwThreadCap + 1);
-        float *bandwidths = (float *)malloc(sizeof(float) * bwThreadCap + 1);
+        float *latencies = (float *)malloc(sizeof(float) * (bwThreadCap + 1));
+        float *bandwidths = (float *)malloc(sizeof(float) * (bwThreadCap + 1));
         for (int bwThreadCount = 0; bwThreadCount <= bwThreadCap; bwThreadCount++) {
             float bw;
-            int nextCore;
+            int nextCore = 0;
             if (bwThreadCount > 0) {
                 if (customCores == NULL) nextCore = coreCount - bwThreadCount - 1;
                 else nextCore = customCores[bwThreadCount - 1] ;
                 fprintf(stderr, "next core is %d\n", nextCore);
+                if (nextCore < 0 || nextCore >= CPU_SETSIZE) {
+                    fprintf(stderr, "Invalid bandwidth CPU %d\n", nextCore);
+                    return 1;
+                }
                 CPU_SET(nextCore, &bw_cpuset);
             }
 
@@ -212,7 +228,7 @@ int main(int argc, char *argv[]) {
         float *bandwidths = (float*)malloc(sizeof(float) * testSizeCount);
         // set mask to all selected cores
         for (int bwThreadCount = 0; bwThreadCount < bwThreadCap; bwThreadCount++) {
-            int nextCore;
+            int nextCore = 0;
             if (customCores == NULL) nextCore = coreCount - bwThreadCount - 1;
             else nextCore = customCores[bwThreadCount];
             CPU_SET(nextCore, &bw_cpuset);
@@ -263,19 +279,19 @@ float RunBandwidthOnlyTest(cpu_set_t bwAffinity, int bwThreadCount, int sizeKb) 
     } 
 
     // Run bandwidth threads for a few seconds and get results
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         pthread_create(&(bandwidthTestData[threadIdx].handle), NULL, ReadBandwidthTestThread, (void *)(bandwidthTestData + threadIdx));
     }
 
     sleep(3);
-    flag = 1;
+    __atomic_store_n(&flag, 1, __ATOMIC_RELAXED);
 
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         pthread_join(bandwidthTestData[threadIdx].handle, NULL);
     }
     
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
 
 
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
@@ -293,7 +309,7 @@ float RunBandwidthOnlyTest(cpu_set_t bwAffinity, int bwThreadCount, int sizeKb) 
 // returns latency in ns
 // sets measuredBw = measured bandwidth
 float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount, int hugepages, int sharedLatency, float *measuredBw) {
-    uint64_t perThreadArrSizeBytes = ceil((double)BandwidthTestMemoryKB / (double)bwThreadCount) * 1024;
+    uint64_t perThreadArrSizeBytes = bwThreadCount ? ceil((double)BandwidthTestMemoryKB / (double)bwThreadCount) * 1024 : 0;
     volatile int flag = 0;  // set 1 to stop
     struct timeval startTv, endTv;
     struct timezone startTz, endTz; 
@@ -319,7 +335,7 @@ float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount
     latencyArr = mmap(NULL, LatencyTestMemoryKB * 1024, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
     if (latencyArr == (void *)-1) {  // MAP_FAILED
         fprintf(stderr, "Failed to map hugepages arr, will use madvise\n");
-        if (0 != posix_memalign((void **)(&latencyArr), 64, LatencyTestMemoryKB * 1024)) {
+        if (0 != posix_memalign((void **)(&latencyArr), CACHELINE_SIZE, LatencyTestMemoryKB * 1024)) {
             fprintf(stderr, "Failed to allocate %lu KB of memory for latency test\n", LatencyTestMemoryKB);
             return 0.0f;
         }
@@ -348,7 +364,7 @@ float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount
         }
     }
 
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     // start bw test threads
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         pthread_create(&(bandwidthTestData[threadIdx].handle), NULL, ReadBandwidthTestThread, (void *)(bandwidthTestData + threadIdx));
@@ -356,16 +372,16 @@ float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount
 
     pthread_create(&(latencyTestData.handle), NULL, RunLatencyTest, (void *)&latencyTestData); 
     pthread_join(latencyTestData.handle, NULL);
-    flag = 1;
+    __atomic_store_n(&flag, 1, __ATOMIC_RELAXED);
 
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         pthread_join(bandwidthTestData[threadIdx].handle, NULL);
     }
     
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
 
     // count on a cacheline basis even though the test only loads 4B at a time
-    uint64_t latencyReadBytes = 64 * LatencyTestIterations;
+    uint64_t latencyReadBytes = CACHELINE_SIZE * LatencyTestIterations;
 
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     float totalReadData = (float)latencyReadBytes;
@@ -416,17 +432,18 @@ void *RunLatencyTest(void *param) {
     if (rc != 0) fprintf(stderr, "Latency thread failed to set affinity\n");
 
     // Run test
-    gettimeofday(&startTv, &startTz);
+    bench_gettimeofday(&startTv, &startTz);
     current = A[0];
     for (int i = 0; i < iterations; i++) {
         current = A[current];
         sum += current;
     }
-    gettimeofday(&endTv, &endTz);
+    bench_gettimeofday(&endTv, &endTz);
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     testData->latency = 1e6 * (float)time_diff_ms / (float)iterations;
 
     if (sum == 0) printf("sum == 0 (?)\n");
+    return NULL;
 }
 
 void *FillBandwidthTestArr(void *param) {
@@ -436,6 +453,7 @@ void *FillBandwidthTestArr(void *param) {
     for (int i = 0; i < float_elements;i++) {
         arr[i] = (i + ((uint64_t)arr & 0x3)) + 0.2f;
     }
+    return NULL;
 }
 
 void *ReadBandwidthTestThread(void *param) {
@@ -449,9 +467,10 @@ void *ReadBandwidthTestThread(void *param) {
         }
     }
 
-    uint64_t totalDataBytes;
+    uint64_t totalDataBytes = 0;
     if (bwTestData->test_method == Read) totalDataBytes = asm_read(bwTestData->arr, bwTestData->arr_length_bytes, bwTestData->flag, throttle);
     else if (bwTestData->test_method == Add) totalDataBytes = asm_add(bwTestData->arr, bwTestData->arr_length_bytes, bwTestData->flag, throttle);
     else fprintf(stderr, "Unsupported test method\n");
     bwTestData->read_bytes = totalDataBytes;
+    return NULL;
 }
