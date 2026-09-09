@@ -86,7 +86,7 @@ loaded-latency allocation/return/CPU selection bugs, and XCR0-aware AVX512 probi
   exact instruction/element counts and bounded loop remainders. Thread scaling
   and the adaptive wall-time harness still need real-machine validation.
 - BoostClockChecker: ordered 64-bit `mftb` around the dependent add chain,
-  calibrated against monotonic time. TB ticks are **not** core cycles; reported
+  calibrated against CLOCK_MONOTONIC_RAW. TB ticks are **not** core cycles; reported
   GHz explicitly assumes one cycle per dependent add. Check this on POWER9/10.
 - CoreClockChecker's AMD MSR/RAPL test is explicitly unsupported on POWER.
   SSE/AVX/AVX512/NT/REP modes, 2/8-byte NOP streams and x86 call-block generator
@@ -96,7 +96,7 @@ No cold-cache latency or prefetch mode existed in these C kernels. Do not add
 `dcbf` in streaming loops or treat it as an NT-store replacement; that would
 change the measurement. `dcbi` is not an unprivileged generic flush. Generated
 code uses the compiler cache-clear facility over the entire modified range.
-Ordinary memory tests use monotonic wall time and compiler memory barriers;
+Ordinary memory tests use CLOCK_MONOTONIC_RAW and compiler memory barriers;
 there is no new CPU fence inside their hot loops. Boost uses instruction
 synchronisation, not a general memory-store drain. See the assembly comments and
 [IBM isync semantics](https://www.ibm.com/docs/ssw_aix_72/com.ibm.aix.alangref/idalangref_isync_ics_instrs.htm).
@@ -147,3 +147,29 @@ Local logs: `/tmp/clambench-{x86,ppc}-final.log`,
 `git -c core.whitespace=cr-at-eol diff --check` preserves legacy CRLF files.
 Removed the tracked `mt_instructionrate/x86_mt_instructionrate` executable;
 C build outputs are ignored. C# sources/tooling were not changed or invoked.
+
+
+## Raw-clock timing follow-up
+
+All C CPU harnesses (including x86 fusion, ARM/RISC-V instruction variants and
+PMU timing) now use `struct timespec` and unsigned 64-bit nanosecond differences.
+No gettimeofday/timeval/timezone or microsecond intermediate remains in these
+paths. The difference helper handles a borrow across seconds before any float
+conversion. Latency, bandwidth, core-energy rate and boost-counter calibration
+use the full delta; printed milliseconds are converted only for presentation.
+MT worker samples and the 2 s/3 s calibration loop now use nanoseconds, with
+zero-sample handling and saturating iteration scaling. Hardware-counter assembly
+and its ordering are unchanged. Windows uses QPC, since RAW is Linux-specific.
+
+The old millisecond start/end API remains for GPU/SVM callers outside this pass,
+implemented over the new clock; CPU code no longer uses it. C#/GPU/SVM sources
+remain untouched.
+
+Validation: all x86-64/POWER targets cross-build with Clang; ARM/RISC-V changed
+instruction harnesses compile to objects. GCC 14 POWER builds and both NUMA
+variants pass in QEMU. GCC and Clang pass the timing/correctness suites and
+POWER smoke tests; a complete single-thread MT suite also passes under GCC.
+Timing tests check 1 ns deltas at large epochs, second-boundary borrowing,
+zero deltas, raw-clock sampling bounds and calibration thresholds/overflow.
+Logs: `/tmp/clambench-{x86,ppc,tests}-raw.log` and
+`/tmp/clambench-ppc-vm/{raw-run,gcc-raw-run}.log`.

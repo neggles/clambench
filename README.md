@@ -23,6 +23,10 @@ also needs the target GNU runtime/linker (or a suitable LLVM runtime/linker).
 `CC`, `CPPFLAGS`, `CFLAGS`, `LDFLAGS` and `LDLIBS` are honoured. Like the original
 makefiles, these small programs rebuild on invocation, including flag changes.
 
+Linux CPU timing uses `CLOCK_MONOTONIC_RAW`, `struct timespec` and integer
+nanosecond deltas. Latency, throughput and calibration calculations no longer
+truncate samples to microseconds or milliseconds; existing display units remain.
+
 Outputs stay in their component directories. `make c` needs neither OpenCL nor
 C# tooling; `make legacy-all` retains the old component selection. See
 [PORTING.md](PORTING.md) for the benchmark inventory, supported POWER modes,
