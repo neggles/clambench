@@ -5,7 +5,6 @@
 #include <string.h>
 #include <limits.h>
 #include <math.h>
-#include <sys/time.h>
 #include "../Common/bench_time.h"
 #include <unistd.h>
 
@@ -480,8 +479,8 @@ void FillPatternArr64(uint64_t *pattern_arr, uint64_t list_size, uint64_t byte_i
 }
 
 float RunTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     uint32_t list_size = size_kb * 1024 / 4;
     uint32_t sum = 0, current;
 
@@ -501,15 +500,15 @@ float RunTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) 
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
 
     // Run test
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     current = A[0];
     for (int i = 0; i < scaled_iterations; i++) {
         current = A[current];
         sum += current;
     }
-    bench_gettimeofday(&endTv, &endTz);
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-    float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
+    bench_now(&endTv);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+    float latency = (double)elapsed_ns / (double)scaled_iterations;
     if (preallocatedArr == NULL) free(A);
 
     if (sum == 0) printf("sum == 0 (?)\n");
@@ -518,8 +517,8 @@ float RunTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) 
 
 // Test array of pointers
 float RunAopTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     uint32_t element_count = size_kb * 1024 / CACHELINE_SIZE;  // one element per cache line
     uint32_t sum = 0, current;
 
@@ -555,14 +554,14 @@ float RunAopTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     free(pattern_arr); 
 
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     for (int i = 0; i < scaled_iterations;) {
         for (int pointer_idx = 0; (pointer_idx < element_count) && (i < scaled_iterations); pointer_idx++, i++)
             sum += *pointer_arr[pointer_idx]; 
     }
-    bench_gettimeofday(&endTv, &endTz);
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-    float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
+    bench_now(&endTv);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+    float latency = (double)elapsed_ns / (double)scaled_iterations;
     if (sum == 0) fprintf(stderr, "something is not right\n");
     if (preallocatedArr == NULL) free(A);
 
@@ -573,8 +572,8 @@ float RunAopTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
 // Tests memory level parallelism. Returns achieved BW in MB/s using specified number of
 // independent pointer chasing chains
 float RunMlpTest(uint32_t size_kb, uint32_t iterations, uint32_t parallelism) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     uint32_t list_size = size_kb * 1024 / 4;
     uint32_t sum = 0, current;
 
@@ -598,17 +597,17 @@ float RunMlpTest(uint32_t size_kb, uint32_t iterations, uint32_t parallelism) {
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations) / parallelism;
 
     // Run test
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     for (uint32_t i = 0; i < scaled_iterations; i++) {
         for (uint32_t j = 0; j < parallelism; j++)
         {
             offsets[j] = A[offsets[j]];
         }
     }
-    bench_gettimeofday(&endTv, &endTz);
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
+    bench_now(&endTv);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
     double mbTransferred = (scaled_iterations * parallelism * sizeof(uint32_t))  / (double)1e6;
-    float bw = 1000 * mbTransferred / (double)time_diff_ms;
+    float bw = 1e9 * mbTransferred / (double)elapsed_ns;
 
     sum = 0;
     for (uint32_t i = 0; i < parallelism; i++) sum += offsets[i];
@@ -629,8 +628,8 @@ float RunMlpTest(uint32_t size_kb, uint32_t iterations, uint32_t parallelism) {
 
 #ifndef UNKNOWN_ARCH
 float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     uint64_t list_size = size_kb * 1024 / POINTER_SIZE; // using 32-bit pointers
     uint32_t sum = 0, current;
 
@@ -659,7 +658,7 @@ float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
 
     // Run test
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     #ifdef LONGPATTERN
     if (longpattern)
         sum = longpatternlatencytest(scaled_iterations, A);
@@ -668,9 +667,9 @@ float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     #else
     sum = latencytest(scaled_iterations, A);
     #endif
-    bench_gettimeofday(&endTv, &endTz);
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-    float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
+    bench_now(&endTv);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+    float latency = (double)elapsed_ns / (double)scaled_iterations;
     if (preallocatedArr == NULL) free(A);
 
     // if (sum == 0) printf("sum == 0 (?)\n");
@@ -682,8 +681,8 @@ float RunAsmTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
 // one element per page, and checking latency difference between that and hitting the same amount of "hot"
 // cachelines using a normal latency test. Use the running kernel page size.
 float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedArr) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     uint32_t element_count = (uint64_t)size_kb * 1024 / PAGE_SIZE;
     uint32_t list_size = size_kb * 1024 / 4;
     uint32_t sum = 0, current;
@@ -740,16 +739,16 @@ float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
     uint32_t scaled_iterations = scale_iterations(size_kb, iterations);
 
     // Run test
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     current = A[0];
     for (int i = 0; i < scaled_iterations; i++) {
         current = A[current];
         sum += current;
         //if (size_kb == 48) fprintf(stderr, "idx: %u\n", current);
     }
-    bench_gettimeofday(&endTv, &endTz);
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-    float latency = 1e6 * (float)time_diff_ms / (float)scaled_iterations;
+    bench_now(&endTv);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+    float latency = (double)elapsed_ns / (double)scaled_iterations;
     if (preallocatedArr == NULL) free(A);
 
     if (element_count > 1 && sum == 0) printf("sum == 0 (?)\n");
@@ -769,9 +768,9 @@ float RunTlbTest(uint32_t size_kb, uint32_t iterations, uint32_t *preallocatedAr
 // loadDistance = how far ahead to push the load (for testing aliasing)
 // cannot set both pageEnd and loadDistance
 void RunStlfTest(uint32_t iterations, int mode, int pageEnd, int loadDistance) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
-    uint64_t time_diff_ms;
+    struct timespec startTv, endTv;
+
+    uint64_t elapsed_ns;
     float latency;
     float stlfResults[CACHELINE_SIZE][CACHELINE_SIZE];
     char *arr; 
@@ -809,11 +808,11 @@ void RunStlfTest(uint32_t iterations, int mode, int pageEnd, int loadDistance) {
         for (int loadOffset = 0; loadOffset < CACHELINE_SIZE; loadOffset++) {
             ((uint32_t *)(arr))[0] = storeOffset;
             ((uint32_t *)(arr))[1] = loadOffset + loadDistance;
-            bench_gettimeofday(&startTv, &startTz);
+            bench_now(&startTv);
             stlfFunc(iterations, arr);
-            bench_gettimeofday(&endTv, &endTz);
-            time_diff_ms = 1e6 * (endTv.tv_sec - startTv.tv_sec) + (endTv.tv_usec - startTv.tv_usec);
-            latency = 1e3 * (float) time_diff_ms / (float) iterations;
+            bench_now(&endTv);
+            elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+            latency = (double)elapsed_ns / (double)iterations;
             stlfResults[storeOffset][loadOffset] = latency;
             fprintf(stderr, "Store offset %d, load offset %d: %f ns\n", storeOffset, loadOffset, latency);
         }

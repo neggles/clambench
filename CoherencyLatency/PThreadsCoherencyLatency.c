@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/sysinfo.h>
-#include <sys/time.h>
 #include "../Common/bench_time.h"
 #include <sys/types.h>
 #include <sys/syscall.h>
@@ -181,13 +180,13 @@ float TimeThreads(unsigned int proc1,
                   LatencyData *lat1,
                   LatencyData *lat2,
                   void *(*threadFunc)(void *)) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     pthread_t testThreads[2];
     int t1rc, t2rc;
     void *res1, *res2;
 
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     t1rc = pthread_create(&testThreads[0], NULL, threadFunc, (void *)lat1);
     t2rc = pthread_create(&testThreads[1], NULL, threadFunc, (void *)lat2);
     if (t1rc != 0 || t2rc != 0) {
@@ -197,10 +196,10 @@ float TimeThreads(unsigned int proc1,
 
     pthread_join(testThreads[0], &res1);
     pthread_join(testThreads[1], &res2);
-    bench_gettimeofday(&endTv, &endTz);
+    bench_now(&endTv);
 
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-    float latency = 1e6 * (float)time_diff_ms / (float)iter;
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+    float latency = (double)elapsed_ns / (double)iter;
     return latency;
 }
 

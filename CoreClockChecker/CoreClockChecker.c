@@ -7,7 +7,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <sys/sysinfo.h>
-#include <sys/time.h>
+#include "../Common/bench_time.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <math.h>
@@ -38,8 +38,8 @@ int amdCpu = 1;
 int numProcs = 0;
 
 int main(int argc, char *argv[]) {
-    struct timeval startTv, endTv;
-    time_t time_diff_ms;
+    struct timespec startTv, endTv;
+    uint64_t elapsed_ns;
     float latency, clockSpeedGhz, energyUnits;
     uint64_t startEnergy, endEnergy, startPkgEnergy, endPkgEnergy;
     uint64_t iterationsHigh = 8e9;
@@ -61,22 +61,22 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < numProcs; i++) {
             setAffinity(i);
 
-            gettimeofday(&startTv, NULL);
+            bench_now(&startTv);
             startEnergy = getCoreEnergyStat(i);
             startPkgEnergy = getPkgEnergyStat(i);
             clktest(iterationsHigh);
             endPkgEnergy = getPkgEnergyStat(i);
 	    endEnergy = getCoreEnergyStat(i);
-            gettimeofday(&endTv, NULL);
+            bench_now(&endTv);
 
-            time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-            latency = 1e6 * (float)time_diff_ms / (float)iterationsHigh;
+            elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+            latency = (double)elapsed_ns / (double)iterationsHigh;
             clockSpeedGhz = 1 / latency;
-            //printf("runtime: %llu ms\n", time_diff_ms);
+            //printf("runtime: %llu ns\n", elapsed_ns);
             //printf("%d, %f GHz\n", i, clockSpeedGhz);
 	    printf("%d, %f, %f\n", i,
-	        ((endEnergy - startEnergy) * energyUnits) / (time_diff_ms / 1000),
-	        ((endPkgEnergy - startPkgEnergy) * energyUnits) / (time_diff_ms / 1000));
+	        ((endEnergy - startEnergy) * energyUnits) / ((double)elapsed_ns / 1e9),
+	        ((endPkgEnergy - startPkgEnergy) * energyUnits) / ((double)elapsed_ns / 1e9));
         }
     } else if (argc > 2 && strncmp(argv[1], "measurecmd", 9) == 0) {
         int rc;
@@ -84,33 +84,33 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "argv[2] is %s\nOnly handling Intel at the moment\n", argv[2]);
 	energyUnits = getEnergyStatusUnits();
 
-	gettimeofday(&startTv, NULL);
+	bench_now(&startTv);
 	startEnergy = getTotalCoreEnergy();
 	startPkgEnergy = getPkgEnergyStat(0);
 	rc = system(argv[2]);
 	endEnergy = getTotalCoreEnergy();
 	endPkgEnergy = getPkgEnergyStat(0);
-	gettimeofday(&endTv, NULL);
+	bench_now(&endTv);
 	fprintf(stderr, "system() returned %d\n", rc);
 
-        time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
+        elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
 	coreJoules = (endEnergy - startEnergy) * energyUnits;
 	pkgJoules = (endPkgEnergy - startPkgEnergy) * energyUnits;
 	printf("Core Joules: %f\n", coreJoules);
 	printf("Package Joules: %f\n", pkgJoules);
-	printf("Elapsed time, seconds: %f\n", (double)time_diff_ms / 1000);
+	printf("Elapsed time, seconds: %f\n", (double)elapsed_ns / 1e9);
     }
     else {
         for (int i = 0; i < numProcs; i++) {
             setAffinity(i);
 
-            gettimeofday(&startTv, NULL);
+            bench_now(&startTv);
             clktest(iterationsHigh);
-            gettimeofday(&endTv, NULL);
-            time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-            latency = 1e6 * (float)time_diff_ms / (float)iterationsHigh;
+            bench_now(&endTv);
+            elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+            latency = (double)elapsed_ns / (double)iterationsHigh;
             clockSpeedGhz = 1 / latency;
-            //printf("runtime: %llu ms\n", time_diff_ms);
+            //printf("runtime: %llu ns\n", elapsed_ns);
             printf("%d, %f GHz\n", i, clockSpeedGhz);
         }
     }

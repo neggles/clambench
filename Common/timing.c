@@ -1,52 +1,24 @@
-#ifdef _MSC_VER
-#include <sys\timeb.h>
-__declspec(selectany) struct timeb start, end;
-void start_timing() {
-    ftime(&start);
-}
-
-unsigned int end_timing() {
-    ftime(&end);
-    return 1000 * (end.time - start.time) + (end.millitm - start.millitm);
-}
-
-void start_timing_ts(struct timeb *startTimeb) {
-    ftime(startTimeb);
-}
-
-unsigned int end_timing_ts(struct timeb* startTimeb) {
-    struct timeb end;
-    ftime(&end);
-    return 1000 * (end.time - startTimeb->time) + (end.millitm - startTimeb->millitm);
-}
-#else
-#include <sys/time.h>
+#include "timing.h"
 #include "bench_time.h"
-#include <stddef.h>
-struct timeval startTv, endTv;
-void start_timing() {
-    bench_gettimeofday(&startTv, NULL);
+
+static struct timespec legacy_start;
+void start_timing(void) { bench_now(&legacy_start); }
+unsigned int end_timing(void) {
+    struct timespec end;
+    bench_now(&end);
+    return (unsigned int)(bench_elapsed_ns(&legacy_start, &end) / 1000000);
 }
 
-unsigned int end_timing() {
-    bench_gettimeofday(&endTv, NULL);
-    return (unsigned int)((endTv.tv_sec - startTv.tv_sec) * 1000 + (endTv.tv_usec - startTv.tv_usec) / 1000);
+unsigned long long scale_iterations_to_target(unsigned long long count, float elapsed_ms, float target_ms) {
+    if (elapsed_ms < 50) return count * 2;
+    return count * (target_ms / elapsed_ms);
 }
 
-void start_timing_ts(struct timeval* start) {
-    bench_gettimeofday(start, NULL);
-}
-
-unsigned int end_timing_ts(struct timeval* start) {
-    struct timeval end;
-    bench_gettimeofday(&end, NULL);
-    return (unsigned int)((end.tv_sec - start->tv_sec) * 1000 + (end.tv_usec - start->tv_usec) / 1000);
-
-}
-#endif
-
-unsigned long long scale_iterations_to_target(unsigned long long last_iteration_count, float last_time, float target_time) {
-  // safety measure to deal with nasty timer precision issues if the system is fast
-  if (last_time < 50) return last_iteration_count * 2;
-  return last_iteration_count * (target_time / last_time);
+uint64_t scale_iterations_to_target_ns(uint64_t count, uint64_t elapsed_ns, uint64_t target_ns) {
+    /* Preserve the old 50 ms calibration threshold without rounding samples. */
+    long double scaled = elapsed_ns < UINT64_C(50000000)
+        ? (long double)count * 2
+        : (long double)count * target_ns / elapsed_ns;
+    if (scaled >= UINT64_MAX) return UINT64_MAX;
+    return scaled < 1 ? 1 : (uint64_t)scaled;
 }

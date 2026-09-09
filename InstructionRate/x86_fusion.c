@@ -2,7 +2,7 @@
  * instructions are fused on Centaur's CNS
  */
 #include <stdio.h>
-#include <sys/time.h>
+#include "../Common/bench_time.h"
 #include <time.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -30,11 +30,11 @@ int intSinkArr[8] __attribute__ ((aligned (64))) = { 2, 3, 4, 5, 6, 7, 8, 9 };
 float measureFunction(uint64_t iterations, float clockSpeedGhz, __attribute((sysv_abi)) uint64_t (*testfunc)(uint64_t));
 
 int main(int argc, char *argv[]) {
-  struct timeval startTv, endTv;
-  struct timezone startTz, endTz;
+  struct timespec startTv, endTv;
+
   uint64_t iterations = 1500000000;
   uint64_t iterationsHigh = iterations * 5;
-  uint64_t time_diff_ms;
+  uint64_t elapsed_ns;
   float latency, opsPerNs, clockSpeedGhz;
   uint64_t intTestArrLength = 1024;
 
@@ -49,11 +49,11 @@ int main(int argc, char *argv[]) {
   }
 
   // figure out clock speed
-  gettimeofday(&startTv, &startTz);
+  bench_now(&startTv);
   clktest(iterationsHigh);
-  gettimeofday(&endTv, &endTz);
-  time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-  latency = 1e6 * (float)time_diff_ms / (float)iterationsHigh;
+  bench_now(&endTv);
+  elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+  latency = (double)elapsed_ns / (double)iterationsHigh;
   // clk speed should be 1/latency, assuming we got one add per clk, roughly
   clockSpeedGhz = 1/latency;
 
@@ -71,16 +71,16 @@ int main(int argc, char *argv[]) {
 }
 
 float measureFunction(uint64_t iterations, float clockSpeedGhz,  __attribute((sysv_abi)) uint64_t (*testfunc)(uint64_t)) {
-  struct timeval startTv, endTv;
-  struct timezone startTz, endTz;
-  uint64_t time_diff_ms, retval;
+  struct timespec startTv, endTv;
+
+  uint64_t elapsed_ns, retval;
   float latency, opsPerNs;
 
-  gettimeofday(&startTv, &startTz);
+  bench_now(&startTv);
   retval = testfunc(iterations);
-  gettimeofday(&endTv, &endTz);
-  time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-  latency = 1e6 * (float)time_diff_ms / (float)iterations;
+  bench_now(&endTv);
+  elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+  latency = (double)elapsed_ns / (double)iterations;
   opsPerNs = 1/latency;
   //printf("%f adds/ns, %f adds/clk?\n", opsPerNs, opsPerNs / clockSpeedGhz);
   //printf("return value: %lu\n", retval);

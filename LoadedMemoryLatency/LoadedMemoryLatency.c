@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
-#include <sys/time.h>
 #include "../Common/bench_time.h"
 #include <sched.h>
 #include <pthread.h>
@@ -257,8 +256,8 @@ int main(int argc, char *argv[]) {
 // Caller ensures at least 1 KB per thread. Runs in private mode
 float RunBandwidthOnlyTest(cpu_set_t bwAffinity, int bwThreadCount, int sizeKb) {
     volatile int flag = 0;
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;  
+    struct timespec startTv, endTv;
+
     struct BandwidthTestThreadData *bandwidthTestData = (struct BandwidthTestThreadData *)malloc(sizeof(struct BandwidthTestThreadData) * bwThreadCount);
     uint64_t perThreadArrSizeBytes = ceil((double)sizeKb / (double)bwThreadCount) * 1024;
 
@@ -279,7 +278,7 @@ float RunBandwidthOnlyTest(cpu_set_t bwAffinity, int bwThreadCount, int sizeKb) 
     } 
 
     // Run bandwidth threads for a few seconds and get results
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         pthread_create(&(bandwidthTestData[threadIdx].handle), NULL, ReadBandwidthTestThread, (void *)(bandwidthTestData + threadIdx));
     }
@@ -291,17 +290,17 @@ float RunBandwidthOnlyTest(cpu_set_t bwAffinity, int bwThreadCount, int sizeKb) 
         pthread_join(bandwidthTestData[threadIdx].handle, NULL);
     }
     
-    bench_gettimeofday(&endTv, &endTz);
+    bench_now(&endTv);
 
 
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
     float totalReadData = 0;
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         free(bandwidthTestData[threadIdx].arr);
         totalReadData += (float)bandwidthTestData[threadIdx].read_bytes;
     }
 
-    float measuredBw = 1000 * (totalReadData / (float)1e9) / (float)time_diff_ms; 
+    float measuredBw = (double)totalReadData / (double)elapsed_ns;
     free(bandwidthTestData); 
 
     return measuredBw;
@@ -311,8 +310,8 @@ float RunBandwidthOnlyTest(cpu_set_t bwAffinity, int bwThreadCount, int sizeKb) 
 float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount, int hugepages, int sharedLatency, float *measuredBw) {
     uint64_t perThreadArrSizeBytes = bwThreadCount ? ceil((double)BandwidthTestMemoryKB / (double)bwThreadCount) * 1024 : 0;
     volatile int flag = 0;  // set 1 to stop
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz; 
+    struct timespec startTv, endTv;
+
     int map_failed = 0;
 
     // MT bw test array fill
@@ -364,7 +363,7 @@ float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount
         }
     }
 
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     // start bw test threads
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         pthread_create(&(bandwidthTestData[threadIdx].handle), NULL, ReadBandwidthTestThread, (void *)(bandwidthTestData + threadIdx));
@@ -378,19 +377,19 @@ float RunTest(cpu_set_t latencyAffinity, cpu_set_t bwAffinity, int bwThreadCount
         pthread_join(bandwidthTestData[threadIdx].handle, NULL);
     }
     
-    bench_gettimeofday(&endTv, &endTz);
+    bench_now(&endTv);
 
     // count on a cacheline basis even though the test only loads 4B at a time
     uint64_t latencyReadBytes = CACHELINE_SIZE * LatencyTestIterations;
 
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
     float totalReadData = (float)latencyReadBytes;
     for (int threadIdx = 0; threadIdx < bwThreadCount; threadIdx++) {
         if (!sharedLatency) free(bandwidthTestData[threadIdx].arr);
         totalReadData += (float)bandwidthTestData[threadIdx].read_bytes;
     }
 
-    *measuredBw = 1000 * (totalReadData / (float)1e9) / (float)time_diff_ms; 
+    *measuredBw = (double)totalReadData / (double)elapsed_ns;
 
     free(bandwidthTestData);
     if (map_failed) free(latencyArr);
@@ -420,8 +419,8 @@ void FillPatternArr(uint32_t *pattern_arr, uint32_t list_size, uint32_t byte_inc
 // returns load to use latency in nanoseconds
 // size_kb should be divisible by 2M, or whatever the hugepage size is
 void *RunLatencyTest(void *param) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     struct LatencyTestData *testData = (struct LatencyTestData *)param;
     uint32_t *A = testData->arr;
     uint32_t iterations = testData->iterations;
@@ -432,15 +431,15 @@ void *RunLatencyTest(void *param) {
     if (rc != 0) fprintf(stderr, "Latency thread failed to set affinity\n");
 
     // Run test
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     current = A[0];
     for (int i = 0; i < iterations; i++) {
         current = A[current];
         sum += current;
     }
-    bench_gettimeofday(&endTv, &endTz);
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
-    testData->latency = 1e6 * (float)time_diff_ms / (float)iterations;
+    bench_now(&endTv);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
+    testData->latency = (double)elapsed_ns / (double)iterations;
 
     if (sum == 0) printf("sum == 0 (?)\n");
     return NULL;

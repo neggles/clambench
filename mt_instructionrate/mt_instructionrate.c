@@ -22,10 +22,11 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 #include "../Common/timing.h"
+#include "../Common/bench_time.h"
 
 
 struct TestThreadData {
-    float timeMs;  // written by thread to indicate elapsed runtime for that thread
+    uint64_t timeNs;  // elapsed nanoseconds for this worker
     uint64_t iterations;
     void *testData;
     int core;     // -1 = don't set affinity. otherwise set affinity to specified core
@@ -111,7 +112,8 @@ int main(int argc, char *argv[]) {
 // test function must perform iterations ops
 float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, void *) SMALLKITTEN, void *data){
   int toleranceMet = 0, minTimeMet = 0;
-  unsigned int timeMs;
+  uint64_t timeNs;
+  struct timespec begin, end;
   
   struct TestThreadData *testData = (struct TestThreadData *)malloc(threadCount * sizeof(struct TestThreadData));
   for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
@@ -129,7 +131,7 @@ float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, vo
 #endif
 
   do {
-    start_timing();
+    bench_now(&begin);
     for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
 #ifndef _MSC_VER
       int rc = pthread_create(testThreads + threadIdx, NULL, TestThread, testData + threadIdx);
@@ -141,25 +143,26 @@ float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, vo
 #endif
     }
 
-    float maxThreadTime = -1, minThreadTime = -1;
+    uint64_t maxThreadTime = 0, minThreadTime = UINT64_MAX;
     for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
 #ifndef _MSC_VER
       pthread_join(testThreads[threadIdx], NULL);
 #else
       WaitForMultipleObjects((DWORD)threadCount, testThreads, TRUE, INFINITE);
 #endif
-      fprintf(stderr, "Thread %d took %f ms\n", threadIdx, testData[threadIdx].timeMs);
-      if (maxThreadTime < 0 || testData[threadIdx].timeMs > maxThreadTime) maxThreadTime = testData[threadIdx].timeMs;
-      if (minThreadTime < 0 || testData[threadIdx].timeMs < minThreadTime) minThreadTime = testData[threadIdx].timeMs;
+      fprintf(stderr, "Thread %d took %f ms\n", threadIdx, testData[threadIdx].timeNs / 1e6);
+      if (testData[threadIdx].timeNs > maxThreadTime) maxThreadTime = testData[threadIdx].timeNs;
+      if (testData[threadIdx].timeNs < minThreadTime) minThreadTime = testData[threadIdx].timeNs;
     }
 
-    timeMs = end_timing();
-    minTimeMet = timeMs > 2000; // see if 2 seconds will work
-    toleranceMet = ((maxThreadTime - minThreadTime) / minThreadTime) < 0.2f; // allow 10% variation?
+    bench_now(&end);
+    timeNs = bench_elapsed_ns(&begin, &end);
+    minTimeMet = timeNs > UINT64_C(2000000000); // see if 2 seconds will work
+    toleranceMet = minThreadTime > 0 && ((double)(maxThreadTime - minThreadTime) / minThreadTime) < 0.2; // allow 20% variation
 
     if (!minTimeMet) {
       // Increase iteration count with 3s target
-      baseIterations = scale_iterations_to_target(baseIterations, (float)timeMs, 3000.0f); 
+      baseIterations = scale_iterations_to_target_ns(baseIterations, timeNs, UINT64_C(3000000000));
       for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
         testData[threadIdx].iterations = baseIterations;
       }
@@ -167,16 +170,16 @@ float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, vo
       fprintf(stderr, "Setting %lu iterations\n", baseIterations);
     } else if (!toleranceMet) {
       for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
-        testData[threadIdx].iterations = scale_iterations_to_target(
+        testData[threadIdx].iterations = scale_iterations_to_target_ns(
           testData[threadIdx].iterations,
-          testData[threadIdx].timeMs,
+          testData[threadIdx].timeNs,
           maxThreadTime);
         fprintf(stderr, "Thread %d -> %lu iterations\n", threadIdx, testData[threadIdx].iterations); 
       }
     }
   } while ((!toleranceMet) || (!minTimeMet));
 
-  fprintf(stderr, "time elapsed: %d ms\n", timeMs);
+  fprintf(stderr, "time elapsed: %.6f ms\n", timeNs / 1e6);
 
   uint64_t totalIterations = 0;
   for (int threadIdx = 0; threadIdx < threadCount; threadIdx++) {
@@ -186,7 +189,7 @@ float measureFunction(uint64_t baseIterations, uint64_t (*testFunc)(uint64_t, vo
   free(testData);
   free(testThreads);
 
-  return (double)totalIterations / ((double)timeMs * 1e6);
+  return (double)totalIterations / (double)timeNs;
 }
 
 void *TestThread(void *param) {
@@ -204,13 +207,12 @@ void *TestThread(void *param) {
     }
   }
   
-  struct timeval start1;
-#else
-  struct timeb start1;
 #endif
-  start_timing_ts(&start1);
+  struct timespec begin, end;
+  bench_now(&begin);
   testData->testfunc(testData->iterations, testData->testData);
-  testData->timeMs = end_timing_ts(&start1);
+  bench_now(&end);
+  testData->timeNs = bench_elapsed_ns(&begin, &end);
 
   return NULL;
 }

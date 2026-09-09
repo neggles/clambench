@@ -67,10 +67,10 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
         for (int j = 0; j < 16; j++) data[j] = 1.0;
         struct timespec begin, end;
-        clock_gettime(CLOCK_MONOTONIC, &begin);
+        bench_now(&begin);
         tests[i].fn(iterations, data);
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        double ns = (end.tv_sec - begin.tv_sec) * 1e9 + end.tv_nsec - begin.tv_nsec;
+        bench_now(&end);
+        double ns = bench_elapsed_ns(&begin, &end);
         if (ns <= 0) {
             fprintf(stderr, "Sample below timer resolution; increase -iterations\n");
             return 1;

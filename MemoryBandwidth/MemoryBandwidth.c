@@ -7,7 +7,6 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <sys/time.h>
 #include "../Common/bench_time.h"
 #include <unistd.h>
 #include <sched.h>
@@ -661,8 +660,8 @@ void FillInstructionArray(uint64_t *nops, uint64_t sizeKb, int nopSize, int bran
 // If coreNode and memNode are set, use the specified numa config
 // otherwise if numa is set to stripe or seq, respect that
 float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shared, int nopBytes, int coreNode, int memNode) {
-    struct timeval startTv, endTv;
-    struct timezone startTz, endTz;
+    struct timespec startTv, endTv;
+
     float bw = 0;
     uint64_t elements = sizeKb * 1024 / sizeof(float);
 
@@ -815,19 +814,19 @@ float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shar
 #ifndef __MINGW32__
     if (pmon) start_perf_monitoring();
 #endif
-    bench_gettimeofday(&startTv, &startTz);
+    bench_now(&startTv);
     for (uint64_t i = 0; i < threads; i++) pthread_create(testThreads + i, NULL, ReadBandwidthTestThread, (void *)(threadData + i));
     for (uint64_t i = 0; i < threads; i++) pthread_join(testThreads[i], NULL);
-    bench_gettimeofday(&endTv, &endTz);
+    bench_now(&endTv);
 #ifndef __MINGW32__
     if (pmon) stop_perf_monitoring();
 #endif
 
-    uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
+    uint64_t elapsed_ns = bench_elapsed_ns(&startTv, &endTv);
     double gbTransferred = iterations * sizeof(float) * elements * threads / (double)1e9;
-    bw = 1000 * gbTransferred / (double)time_diff_ms;
+    bw = 1e9 * gbTransferred / (double)elapsed_ns;
     if (!shared) bw = bw * threads; // iteration count is divided by thread count if in thread private mode
-    //printf("%f GB, %lu ms\n", gbTransferred, time_diff_ms);
+    //printf("%f GB, %lu ns\n", gbTransferred, elapsed_ns);
 #ifdef NUMA
     if (numa) numa_free_cpumask(nodeBitmask);
 #endif

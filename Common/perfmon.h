@@ -1,3 +1,4 @@
+#include "bench_time.h"
 // Stuff that only works on Linux. Should be #ifdef-ed out for mingw cross compilation
 uint64_t readmsr(uint32_t coreindex, uint32_t msrindex) {
     char buf[256];
@@ -36,8 +37,8 @@ struct perf_select_data {
 
 struct perf_select_data perf_selected_events[PERF_NUM_EVENTS];
 struct perf_read_data perfReadData;
-struct timeval perf_startTv, perf_endTv;
-uint64_t perf_time_ms;
+struct timespec perf_startTv, perf_endTv;
+uint64_t perf_time_ns;
 
 // populates basic properties
 void initialize_hw_event(struct perf_event_attr *attr, uint64_t cfg, uint32_t hwid) {
@@ -86,7 +87,7 @@ void open_perf_monitoring() {
 }
 
 void start_perf_monitoring() {
-    gettimeofday(&perf_startTv, NULL);
+    bench_now(&perf_startTv);
     int groupLeaderFd = perf_selected_events[0].fd;
     ioctl(groupLeaderFd, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
     ioctl(groupLeaderFd, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP); 
@@ -110,8 +111,8 @@ void stop_perf_monitoring() {
         }
     }
 
-    gettimeofday(&perf_endTv, NULL);
-    perf_time_ms = ((perf_endTv.tv_sec - perf_startTv.tv_sec) * 1000 + (perf_endTv.tv_usec - perf_startTv.tv_usec) / 1000); 
+    bench_now(&perf_endTv);
+    perf_time_ns = bench_elapsed_ns(&perf_startTv, &perf_endTv);
 }
 
 void close_perf_monitoring() {
@@ -131,5 +132,5 @@ void append_perf_values() {
         printf(",%lu", perf_selected_events[evt_idx].value);
     }
     
-    printf(",%lu", perf_time_ms);
+    printf(",%.6f", perf_time_ns / 1e6);
 }

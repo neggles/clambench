@@ -1,27 +1,54 @@
 #ifndef CLAMBENCH_BENCH_TIME_H
 #define CLAMBENCH_BENCH_TIME_H
-#include <sys/time.h>
+#include <stdint.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
-/* Long-running kernels need elapsed wall time, not core-cycle counts. Keep
-   timeval at legacy call sites but use monotonic time; NTP/calendar steps must
-   not change measured latency. Calls delimit opaque assembly functions; no
-   fence is injected in the measured loops. This is not a per-instruction timer. Empty asm is a compiler memory barrier only. */
-static inline int bench_gettimeofday(struct timeval *tv, void *unused)
-{
-#ifdef __MINGW32__
-    /* Preserve the legacy MinGW clock interface; Linux uses monotonic time. */
-    return gettimeofday(tv, unused);
-#else
-    (void)unused;
-    __asm__ volatile("" ::: "memory");
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts)) { perror("clock_gettime"); exit(1); }
-    tv->tv_sec = ts.tv_sec;
-    tv->tv_usec = ts.tv_nsec / 1000;
-    __asm__ volatile("" ::: "memory");
-    return 0;
+#ifdef _WIN32
+#include <windows.h>
+#ifdef _MSC_VER
+#include <intrin.h>
 #endif
+#endif
+
+/* Elapsed time, not core cycles. RAW avoids clock-rate adjustments by NTP.
+   These are compiler memory barriers, not CPU fences or store drains. Exact
+   instruction ordering remains the responsibility of the assembly kernels. */
+static inline void bench_now(struct timespec *ts)
+{
+#ifdef _MSC_VER
+    _ReadWriteBarrier();
+#else
+    __asm__ volatile("" ::: "memory");
+#endif
+#ifdef _WIN32
+    /* Windows has no CLOCK_MONOTONIC_RAW; retain monotonic timing via QPC. */
+    LARGE_INTEGER counter, frequency;
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&counter)) {
+        fputs("QueryPerformanceCounter failed\n", stderr); exit(1);
+    }
+    ts->tv_sec = counter.QuadPart / frequency.QuadPart;
+    ts->tv_nsec = (long)((counter.QuadPart % frequency.QuadPart) * 1000000000LL / frequency.QuadPart);
+#else
+    if (clock_gettime(CLOCK_MONOTONIC_RAW, ts)) {
+        perror("clock_gettime(CLOCK_MONOTONIC_RAW)"); exit(1);
+    }
+#endif
+#ifdef _MSC_VER
+    _ReadWriteBarrier();
+#else
+    __asm__ volatile("" ::: "memory");
+#endif
+}
+
+/* Subtract before converting to floating point, including a nanosecond borrow
+   across a second boundary. Requires end >= start from the same clock. */
+static inline uint64_t bench_elapsed_ns(const struct timespec *start,
+                                       const struct timespec *end)
+{
+    time_t seconds = end->tv_sec - start->tv_sec;
+    long nanos = end->tv_nsec - start->tv_nsec;
+    if (nanos < 0) { --seconds; nanos += 1000000000L; }
+    return (uint64_t)seconds * UINT64_C(1000000000) + (uint64_t)nanos;
 }
 #endif
